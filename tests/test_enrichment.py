@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from doc_comparing.enrichment import (
+from doc_processing.enrichment import (
     TableDescriptionRequest,
     enrich_document,
     replace_formula_blocks,

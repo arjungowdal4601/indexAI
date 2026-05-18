@@ -1,6 +1,6 @@
 import unittest
 
-from doc_comparing.table_detection import (
+from doc_processing.table_detection import (
     LogicalTableInternal,
     build_minimal_output_payload,
 )

@@ -1,8 +1,8 @@
 import inspect
 import unittest
 
-import doc_comparing.enrichment as enrichment
-from doc_comparing.prompts import (
+import doc_processing.enrichment as enrichment
+from doc_processing.prompts import (
     FORMULA_PROMPT,
     FORMULA_SYSTEM_PROMPT,
     PICTURE_PROMPT,

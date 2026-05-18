@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from doc_comparing.docling_converter import convert_pdf_with_docling
+from doc_processing.docling_converter import convert_pdf_with_docling
 
 
 class FakeDoc:
