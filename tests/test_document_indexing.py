@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 
 from document_indexing import run_document_indexing
+from document_indexing.graph import export_graph_mermaid
 from document_indexing.llm import LangChainTopicIndexingClient
+from document_indexing.nodes import load_state_node, read_manifest_node
 from document_indexing.prompts import (
     DESCRIPTION_UPDATE_PROMPT,
     TOPIC_EXTRACTION_PROMPT,
@@ -16,6 +18,8 @@ from document_indexing.schemas import (
     TopicEntry,
     TopicMatchDecision,
 )
+from document_indexing.routers import route_after_state
+from document_indexing.state import DocumentIndexingState
 from document_indexing.storage import (
     load_processing_state,
     load_topic_index,
@@ -216,6 +220,23 @@ class DocumentIndexingPromptTests(unittest.TestCase):
 
 
 class DocumentIndexingGraphTests(unittest.TestCase):
+    def test_graph_components_are_split_into_readable_modules(self):
+        self.assertEqual(DocumentIndexingState.__name__, "DocumentIndexingState")
+        self.assertTrue(callable(load_state_node))
+        self.assertTrue(callable(read_manifest_node))
+        self.assertTrue(callable(route_after_state))
+
+    def test_exports_mermaid_graph_with_langgraph_renderer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "document_indexing_graph.mmd"
+
+            export_graph_mermaid(output_path)
+
+            mermaid = output_path.read_text(encoding="utf-8")
+            self.assertIn("load_state", mermaid)
+            self.assertIn("read_manifest", mermaid)
+            self.assertIn("write_outputs", mermaid)
+
     def test_graph_indexes_two_windows_into_one_continuous_topic(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

@@ -85,12 +85,15 @@ class LangChainTopicIndexingClient:
                 "Set OPENAI_API_KEY and rerun python main.py."
             )
 
+        reasoning_effort = "high"
+
         self.llm = ChatOpenAI(
             api_key=api_key,
             model=model
             or os.getenv("DOC_INDEXING_MODEL")
             or os.getenv("OPENAI_MODEL")
             or DEFAULT_ENRICHMENT_MODEL,
+            reasoning_effort=reasoning_effort,
         )
         self.candidate_chain = (
             TOPIC_EXTRACTION_PROMPT

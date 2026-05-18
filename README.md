@@ -37,8 +37,11 @@ doc_comparing/
 |       |-- graph.py
 |       |-- llm.py
 |       |-- main.py
+|       |-- nodes.py
 |       |-- prompts.py
+|       |-- routers.py
 |       |-- schemas.py
+|       |-- state.py
 |       |-- storage.py
 |       `-- validator.py
 |-- tests/
