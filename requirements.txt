@@ -2,3 +2,4 @@ docling
 pypdf
 python-dotenv
 langchain-openai
+langgraph
