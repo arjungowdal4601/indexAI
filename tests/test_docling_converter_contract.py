@@ -45,7 +45,7 @@ class DoclingConverterContractTests(unittest.TestCase):
 
             fake_converter = FakeConverter()
             with patch(
-                "doc_comparing.docling_converter.build_docling_converter",
+                "doc_processing.docling_converter.build_docling_converter",
                 return_value=fake_converter,
             ):
                 output = convert_pdf_with_docling(pdf_path, page_range=(1, 2))
