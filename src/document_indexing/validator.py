@@ -6,28 +6,38 @@ import json
 import re
 from collections import Counter
 
-from .schemas import TopicEntry, ValidationReport
+from .schemas import TopicAsset, TopicEntry, ValidationReport
 
 def estimate_tokens(payload: object) -> int:
     text = json.dumps(payload, ensure_ascii=False)
     return max(1, len(text) // 4)
 
 
-def _clean_keywords(keywords: list[str]) -> tuple[list[str], bool]:
+def _clean_assets(assets: list[TopicAsset]) -> tuple[list[TopicAsset], bool]:
     cleaned = []
     seen = set()
     changed = False
-    for keyword in keywords:
-        normalized = re.sub(r"\s+", " ", keyword.strip())
-        if not normalized:
+    for asset in assets:
+        path = re.sub(r"\s+", " ", asset.path.strip())
+        description = re.sub(r"\s+", " ", asset.description.strip())
+        if path != asset.path or description != asset.description:
+            changed = True
+        if not path or not description:
             changed = True
             continue
-        key = normalized.lower()
+        key = (asset.page, asset.type, path)
         if key in seen:
             changed = True
             continue
         seen.add(key)
-        cleaned.append(normalized)
+        cleaned.append(
+            TopicAsset(
+                page=asset.page,
+                type=asset.type,
+                path=path,
+                description=description,
+            )
+        )
     return cleaned, changed
 
 
@@ -48,9 +58,9 @@ def validate_topic_index(
         if pages != topic.pages:
             fixes.append(f"normalized_pages: {topic.topic}")
 
-        keywords, keywords_changed = _clean_keywords(topic.keywords)
-        if keywords_changed:
-            fixes.append(f"cleaned_keywords: {topic.topic}")
+        assets, assets_changed = _clean_assets(topic.assets)
+        if assets_changed:
+            fixes.append(f"cleaned_assets: {topic.topic}")
 
         description = re.sub(r"\s+", " ", topic.description.strip())
         if description != topic.description:
@@ -60,7 +70,7 @@ def validate_topic_index(
                 topic=topic.topic.strip(),
                 pages=pages,
                 description=description,
-                keywords=keywords,
+                assets=assets,
             )
         )
 
@@ -81,8 +91,6 @@ def validate_topic_index(
             failures.append(f"empty_pages: {topic.topic}")
         if not topic.description:
             failures.append(f"empty_description: {topic.topic}")
-        if not topic.keywords:
-            warnings.append(f"empty_keywords: {topic.topic}")
 
     status = "failed" if failures else "passed"
     warnings.extend(failures)

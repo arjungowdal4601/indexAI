@@ -12,22 +12,35 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TopicAsset(StrictModel):
+    page: int
+    type: Literal["figure", "table", "formula"]
+    path: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+
+
 class TopicEntry(StrictModel):
     topic: str = Field(min_length=1)
     pages: list[int]
     description: str = Field(min_length=1)
-    keywords: list[str]
+    assets: list[TopicAsset] = Field(default_factory=list)
 
 
 class TopicCandidate(StrictModel):
     topic: str = Field(min_length=1)
     pages: list[int]
     description: str = Field(min_length=1)
-    keywords: list[str]
+    assets: list[TopicAsset] = Field(default_factory=list)
+
+
+class TopicCandidateDraft(StrictModel):
+    topic: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    asset_paths: list[str] = Field(default_factory=list)
 
 
 class TopicCandidateList(StrictModel):
-    candidates: list[TopicCandidate]
+    candidates: list[TopicCandidateDraft]
 
 
 class TopicMatchDecision(StrictModel):
@@ -62,8 +75,10 @@ class PageMarkdown(StrictModel):
 
 
 class PageWindow(StrictModel):
-    main_pages: list[PageMarkdown]
-    context_pages: list[PageMarkdown]
+    previous_page_topics: list[TopicEntry]
+    target_page: PageMarkdown
+    target_page_assets: list[TopicAsset] = Field(default_factory=list)
+    next_page: PageMarkdown | None = None
 
 
 class ProcessingState(StrictModel):

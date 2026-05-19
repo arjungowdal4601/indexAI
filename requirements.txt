@@ -1,5 +1,7 @@
 docling
 pypdf
 python-dotenv
+langchain-core
 langchain-openai
 langgraph
+pydantic

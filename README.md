@@ -1,6 +1,6 @@
 # Document Processing Pipeline
 
-This project has two separate runnable pipelines.
+This project has three separate runnable pipelines.
 
 The document processing pipeline runs:
 
@@ -8,8 +8,10 @@ The document processing pipeline runs:
 2. **Table continuity detection**: deterministic multi-page table grouping.
 3. **Enrichment**: readable markdown with table, figure, and formula images plus descriptions.
 Topic indexing is a separate pipeline that reads the enriched page Markdown and writes a compact topic-centric JSON index.
+Topic retrieval is a separate query-time pipeline that reads the topic index, loads only selected enriched page Markdown files, and answers from that evidence.
 
 No LLM is used during Docling conversion or table-continuity detection. Enrichment and topic indexing use LangChain chat prompt templates and `langchain-openai`; indexing uses schema-based structured output.
+Retrieval also uses LangGraph, LangChain chat prompt templates, and schema-based structured output.
 
 ## Structure
 
@@ -30,7 +32,7 @@ doc_comparing/
 |   |   |-- table_detection.py
 |   |   |-- enrichment.py
 |   |   `-- prompts.py
-|   `-- document_indexing/
+|   |-- document_indexing/
 |       |-- __init__.py
 |       |-- __main__.py
 |       |-- config.py
@@ -44,10 +46,24 @@ doc_comparing/
 |       |-- state.py
 |       |-- storage.py
 |       `-- validator.py
+|   `-- document_retrieval/
+|       |-- __init__.py
+|       |-- __main__.py
+|       |-- config.py
+|       |-- graph.py
+|       |-- llm.py
+|       |-- main.py
+|       |-- nodes.py
+|       |-- prompts.py
+|       |-- routers.py
+|       |-- schemas.py
+|       |-- state.py
+|       `-- storage.py
 |-- tests/
 |   |-- conftest.py
 |   |-- test_docling_converter_contract.py
 |   |-- test_document_indexing.py
+|   |-- test_document_retrieval.py
 |   |-- test_enrichment.py
 |   |-- test_pipeline.py
 |   |-- test_prompts.py
@@ -133,4 +149,33 @@ sample_doc_assets/
 
 The readable markdown keeps old-style relative image links such as `![Table](table_images/table-1.png)` while using table-continuity context to improve continued table descriptions.
 
-The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`.
+The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`. Each topic entry contains `topic`, `pages`, a rich evidence-focused `description`, and `assets` for target-page figures, tables, and formulas. Legacy `keywords` entries can still be loaded, but new index writes use `assets` instead.
+
+## Run Document Retrieval
+
+Run retrieval separately after enriched page Markdown and `topic_index.json` exist:
+
+```bash
+python src/document_retrieval/main.py "What is scaled dot-product attention?"
+```
+
+or:
+
+```bash
+python -m document_retrieval "What is scaled dot-product attention?"
+```
+
+By default this reads:
+
+```text
+sample_doc_assets/indexing_output/topic_index.json
+sample_doc_assets/enriched_doc/pages_md/
+```
+
+You can override paths and the retrieval context budget:
+
+```bash
+python src/document_retrieval/main.py "What is scaled dot-product attention?" --topic-index sample_doc_assets/indexing_output/topic_index.json --pages-folder sample_doc_assets/enriched_doc/pages_md --max-direct-pages 10 --max-direct-estimated-tokens 70000
+```
+
+The retrieval output includes a deterministic retrieval trace, page files read, memory mode, final answer, pages used, and any missing information reported by the model.

@@ -14,6 +14,7 @@ from .schemas import (
     PageMarkdown,
     PageWindow,
     ProcessingState,
+    TopicAsset,
     TopicEntry,
     ValidationReport,
 )
@@ -24,6 +25,12 @@ VALIDATION_REPORT_FILE = "validation_report.json"
 REVISION_LOG_FILE = "revision_log.md"
 
 PAGE_FILE_PATTERN = re.compile(r"(\d+)")
+MARKDOWN_ASSET_PATTERN = re.compile(r"!\[(Figure|Table|Formula)\]\(([^)]+)\)")
+ASSET_TYPE_BY_LABEL = {
+    "Figure": "figure",
+    "Table": "table",
+    "Formula": "formula",
+}
 
 
 def page_number_from_path(path: Path) -> int:
@@ -54,34 +61,94 @@ def read_page_manifest(pages_folder_path: str | Path) -> PageManifest:
 
 def read_page_window(
     manifest: PageManifest,
-    start_page: int,
-    main_window_size: int,
-    context_window_size: int,
+    target_page: int,
+    current_topic_index: list[TopicEntry],
+    include_next_page: bool = True,
 ) -> PageWindow:
     by_page = {entry.page: entry.path for entry in manifest.pages}
-    main_pages = []
-    context_pages = []
 
-    main_end = min(start_page + main_window_size - 1, manifest.total_pages)
-    context_end = min(main_end + context_window_size, manifest.total_pages)
+    target_path = by_page.get(target_page)
+    if target_path is None:
+        raise FileNotFoundError(f"Missing target page markdown for page {target_page}")
 
-    for page_no in range(start_page, main_end + 1):
-        path = by_page.get(page_no)
+    next_page = None
+    next_page_no = target_page + 1
+    if include_next_page and next_page_no <= manifest.total_pages:
+        path = by_page.get(next_page_no)
         if path is None:
-            raise FileNotFoundError(f"Missing main page markdown for page {page_no}")
-        main_pages.append(
-            PageMarkdown(page=page_no, markdown=path.read_text(encoding="utf-8"))
+            raise FileNotFoundError(
+                f"Missing next context page markdown for page {next_page_no}"
+            )
+        next_page = PageMarkdown(
+            page=next_page_no,
+            markdown=path.read_text(encoding="utf-8"),
         )
 
-    for page_no in range(main_end + 1, context_end + 1):
-        path = by_page.get(page_no)
-        if path is None:
-            raise FileNotFoundError(f"Missing context page markdown for page {page_no}")
-        context_pages.append(
-            PageMarkdown(page=page_no, markdown=path.read_text(encoding="utf-8"))
+    target_markdown = target_path.read_text(encoding="utf-8")
+    return PageWindow(
+        previous_page_topics=topics_for_page(current_topic_index, target_page - 1),
+        target_page=PageMarkdown(
+            page=target_page,
+            markdown=target_markdown,
+        ),
+        target_page_assets=extract_page_assets(target_page, target_markdown),
+        next_page=next_page,
+    )
+
+
+def topics_for_page(topics: list[TopicEntry], page_no: int) -> list[TopicEntry]:
+    return [topic for topic in topics if page_no in topic.pages]
+
+
+def _clean_asset_description(text: str, max_chars: int = 320) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) <= max_chars:
+        return cleaned
+    trimmed = cleaned[:max_chars].rsplit(" ", 1)[0].rstrip(" .,;:")
+    return f"{trimmed}."
+
+
+def _collect_asset_description(lines: list[str], start_index: int) -> str:
+    collected: list[str] = []
+    for line in lines[start_index:]:
+        stripped = line.strip()
+        if not stripped:
+            if collected:
+                break
+            continue
+        if stripped.startswith("## ") or MARKDOWN_ASSET_PATTERN.search(stripped):
+            break
+        collected.append(stripped)
+        if len(" ".join(collected)) >= 280:
+            break
+    return _clean_asset_description(" ".join(collected))
+
+
+def extract_page_assets(page: int, markdown: str) -> list[TopicAsset]:
+    assets: list[TopicAsset] = []
+    lines = markdown.splitlines()
+
+    for index, line in enumerate(lines):
+        match = MARKDOWN_ASSET_PATTERN.search(line)
+        if match is None:
+            continue
+        label, path = match.groups()
+        asset_type = ASSET_TYPE_BY_LABEL[label]
+        description = _collect_asset_description(lines, index + 1)
+        if not description:
+            description = f"{asset_type.title()} asset on page {page}."
+        assets.append(
+            TopicAsset(
+                page=page,
+                type=asset_type,  # type: ignore[arg-type]
+                path=path.strip(),
+                description=description,
+            )
         )
 
-    return PageWindow(main_pages=main_pages, context_pages=context_pages)
+    return assets
 
 
 def load_topic_index(topic_index_path: str | Path) -> list[TopicEntry]:
@@ -91,7 +158,16 @@ def load_topic_index(topic_index_path: str | Path) -> list[TopicEntry]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         raise ValueError(f"Topic index root must be a list: {path}")
-    return [TopicEntry.model_validate(item) for item in data]
+    return [TopicEntry.model_validate(_normalize_topic_payload(item)) for item in data]
+
+
+def _normalize_topic_payload(item: object) -> object:
+    if not isinstance(item, dict):
+        return item
+    normalized = dict(item)
+    normalized.pop("keywords", None)
+    normalized.setdefault("assets", [])
+    return normalized
 
 
 def load_processing_state(

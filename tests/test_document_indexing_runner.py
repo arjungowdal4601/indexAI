@@ -34,8 +34,8 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 pages_folder_path=pages_dir,
                 output_folder_path=output_dir,
                 document_id="sample",
-                main_window_size=3,
-                context_window_size=2,
+                main_window_size=1,
+                context_window_size=1,
                 token_limit=80000,
             )
 

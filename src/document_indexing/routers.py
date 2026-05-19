@@ -10,8 +10,8 @@ def route_after_state(state: DocumentIndexingState) -> str:
 
 
 def route_after_window(state: DocumentIndexingState) -> str:
-    return "end" if state.get("status") == "completed" else "read_index"
+    return "end" if state.get("status") == "completed" else "extract_candidates"
 
 
 def route_after_write(state: DocumentIndexingState) -> str:
-    return "end" if state.get("status") == "completed" else "read_window"
+    return "end" if state.get("status") == "completed" else "read_index"

@@ -15,6 +15,8 @@ from .prompts import (
 from .schemas import (
     PageMarkdown,
     TopicCandidate,
+    TopicAsset,
+    TopicCandidateDraft,
     TopicCandidateList,
     TopicDescriptionUpdate,
     TopicEntry,
@@ -25,10 +27,12 @@ from .schemas import (
 class TopicIndexingClient(Protocol):
     def extract_candidates(
         self,
-        main_pages: list[PageMarkdown],
-        context_pages: list[PageMarkdown],
+        target_page: PageMarkdown,
+        target_page_assets: list[TopicAsset],
+        previous_page_topics: list[TopicEntry],
+        next_page: PageMarkdown | None,
         existing_topics: list[TopicEntry],
-    ) -> list[TopicCandidate]:
+    ) -> list[TopicCandidateDraft]:
         ...
 
     def match_topics(
@@ -42,11 +46,19 @@ class TopicIndexingClient(Protocol):
         ...
 
 
-def format_pages(pages: list[PageMarkdown]) -> str:
-    if not pages:
+def format_page(page: PageMarkdown | None) -> str:
+    if page is None:
         return "None."
-    return "\n\n".join(
-        f"PAGE {page.page}\n{page.markdown.strip()}" for page in pages
+    return f"PAGE {page.page}\n{page.markdown.strip()}"
+
+
+def summarize_assets(assets: list[TopicAsset]) -> str:
+    if not assets:
+        return "No target-page assets."
+    return json.dumps(
+        [asset.model_dump(mode="json") for asset in assets],
+        ensure_ascii=False,
+        indent=2,
     )
 
 
@@ -60,7 +72,7 @@ def summarize_topics(topics: list[TopicEntry]) -> str:
                 "topic": topic.topic,
                 "pages": topic.pages,
                 "description": topic.description,
-                "keywords": topic.keywords,
+                "assets": [asset.model_dump(mode="json") for asset in topic.assets],
             }
         )
     return json.dumps(summary, ensure_ascii=False, indent=2)
@@ -85,7 +97,7 @@ class LangChainTopicIndexingClient:
                 "Set OPENAI_API_KEY and rerun python main.py."
             )
 
-        reasoning_effort = "high"
+        reasoning_effort = "medium"
 
         self.llm = ChatOpenAI(
             api_key=api_key,
@@ -110,15 +122,24 @@ class LangChainTopicIndexingClient:
 
     def extract_candidates(
         self,
-        main_pages: list[PageMarkdown],
-        context_pages: list[PageMarkdown],
+        target_page: PageMarkdown,
+        target_page_assets: list[TopicAsset],
+        previous_page_topics: list[TopicEntry],
+        next_page: PageMarkdown | None,
         existing_topics: list[TopicEntry],
-    ) -> list[TopicCandidate]:
+    ) -> list[TopicCandidateDraft]:
         response = self.candidate_chain.invoke(
             {
                 "existing_topic_summary": summarize_topics(existing_topics),
-                "main_pages": format_pages(main_pages),
-                "context_pages": format_pages(context_pages),
+                "previous_page_number": target_page.page - 1
+                if target_page.page > 1
+                else "None",
+                "previous_page_indexed_topics": summarize_topics(previous_page_topics),
+                "target_page_number": target_page.page,
+                "target_page_markdown": target_page.markdown.strip(),
+                "target_page_assets": summarize_assets(target_page_assets),
+                "next_page_number": next_page.page if next_page is not None else "None",
+                "next_page_markdown": format_page(next_page),
             }
         )
         return list(response.candidates)

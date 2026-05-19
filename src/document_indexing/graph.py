@@ -6,6 +6,11 @@ from pathlib import Path
 
 from langgraph.graph import END, StateGraph
 
+from .config import (
+    DEFAULT_CONTEXT_WINDOW_SIZE,
+    DEFAULT_MAIN_WINDOW_SIZE,
+    DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+)
 from .llm import LangChainTopicIndexingClient, TopicIndexingClient
 from .nodes import (
     extract_candidates_node,
@@ -27,11 +32,6 @@ from .storage import (
     VALIDATION_REPORT_FILE,
 )
 
-DEFAULT_MAIN_WINDOW_SIZE = 3
-DEFAULT_CONTEXT_WINDOW_SIZE = 2
-DEFAULT_TOPIC_INDEX_TOKEN_LIMIT = 80000
-
-
 def build_document_indexing_graph():
     graph = StateGraph(DocumentIndexingState)
 
@@ -50,20 +50,20 @@ def build_document_indexing_graph():
         route_after_state,
         {"read_manifest": "read_manifest", "end": END},
     )
-    graph.add_edge("read_manifest", "read_window")
+    graph.add_edge("read_manifest", "read_index")
+    graph.add_edge("read_index", "read_window")
     graph.add_conditional_edges(
         "read_window",
         route_after_window,
-        {"read_index": "read_index", "end": END},
+        {"extract_candidates": "extract_candidates", "end": END},
     )
-    graph.add_edge("read_index", "extract_candidates")
     graph.add_edge("extract_candidates", "match_candidates")
     graph.add_edge("match_candidates", "update_index")
     graph.add_edge("update_index", "write_outputs")
     graph.add_conditional_edges(
         "write_outputs",
         route_after_write,
-        {"read_window": "read_window", "end": END},
+        {"read_index": "read_index", "end": END},
     )
 
     return graph.compile()

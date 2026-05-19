@@ -9,7 +9,9 @@ from .llm import TopicIndexingClient
 from .schemas import (
     PageWindow,
     ProcessingState,
+    TopicAsset,
     TopicCandidate,
+    TopicCandidateDraft,
     TopicEntry,
     TopicMatchDecision,
     ValidationReport,
@@ -29,18 +31,25 @@ from .storage import (
 from .validator import validate_topic_index
 
 
-def _restrict_candidate_to_main_pages(
-    candidate: TopicCandidate,
-    main_pages: set[int],
-) -> Optional[TopicCandidate]:
-    pages = sorted({page for page in candidate.pages if page in main_pages})
-    if not pages:
-        return None
+def _candidate_from_draft(
+    draft: TopicCandidateDraft,
+    target_page: int,
+    target_page_assets: list[TopicAsset],
+) -> TopicCandidate:
+    assets_by_path = {asset.path: asset for asset in target_page_assets}
+    selected_assets = []
+    seen_paths = set()
+    for path in draft.asset_paths:
+        asset = assets_by_path.get(path)
+        if asset is None or asset.path in seen_paths:
+            continue
+        seen_paths.add(asset.path)
+        selected_assets.append(asset)
     return TopicCandidate(
-        topic=candidate.topic,
-        pages=pages,
-        description=candidate.description,
-        keywords=candidate.keywords,
+        topic=draft.topic,
+        pages=[target_page],
+        description=draft.description,
+        assets=selected_assets,
     )
 
 
@@ -60,18 +69,15 @@ def _find_topic(topics: list[TopicEntry], topic_name: str | None) -> TopicEntry 
     return None
 
 
-def _merge_keywords(existing: list[str], new: list[str]) -> list[str]:
-    merged = []
+def _merge_assets(existing: list[TopicAsset], new: list[TopicAsset]) -> list[TopicAsset]:
+    merged: list[TopicAsset] = []
     seen = set()
-    for keyword in existing + new:
-        cleaned = " ".join(keyword.strip().split())
-        if not cleaned:
-            continue
-        key = cleaned.lower()
+    for asset in existing + new:
+        key = (asset.page, asset.type, asset.path)
         if key in seen:
             continue
         seen.add(key)
-        merged.append(cleaned)
+        merged.append(asset)
     return merged
 
 
@@ -103,7 +109,7 @@ def _update_topic_index(
                 topic=existing_topic.topic,
                 pages=sorted(set(existing_topic.pages + candidate.pages)),
                 description=merged_description,
-                keywords=_merge_keywords(existing_topic.keywords, candidate.keywords),
+                assets=_merge_assets(existing_topic.assets, candidate.assets),
             )
             topics = [
                 replacement if topic.topic == existing_topic.topic else topic
@@ -117,7 +123,7 @@ def _update_topic_index(
                 topic=candidate.topic,
                 pages=sorted(set(candidate.pages)),
                 description=candidate.description,
-                keywords=_merge_keywords([], candidate.keywords),
+                assets=_merge_assets([], candidate.assets),
             )
         )
         added.append(candidate.topic)
@@ -132,12 +138,10 @@ def build_revision_log_entry(
     updated_topics: list[str],
     validation_report: ValidationReport,
 ) -> str:
-    main_pages = [page.page for page in window.main_pages]
-    context_pages = [page.page for page in window.context_pages]
-    main_range = f"{main_pages[0]}-{main_pages[-1]}" if main_pages else "none"
-    context_range = (
-        f"{context_pages[0]}-{context_pages[-1]}" if context_pages else "none"
+    previous_topics = (
+        ", ".join(topic.topic for topic in window.previous_page_topics) or "None"
     )
+    next_page = str(window.next_page.page) if window.next_page is not None else "None"
 
     added_text = "\n".join(f"- {topic}" for topic in added_topics) or "- None"
     updated_text = "\n".join(f"- {topic}" for topic in updated_topics) or "- None"
@@ -149,8 +153,9 @@ def build_revision_log_entry(
 
     return (
         f"## Step {step_number:03d}\n\n"
-        f"Main pages: {main_range}\n"
-        f"Context pages: {context_range}\n\n"
+        f"Target page: {window.target_page.page}\n"
+        f"Previous page indexed topics: {previous_topics}\n"
+        f"Next context page: {next_page}\n\n"
         "Added topics:\n"
         f"{added_text}\n\n"
         "Updated topics:\n"
@@ -188,9 +193,9 @@ def read_window_node(state: DocumentIndexingState) -> DocumentIndexingState:
         return {"status": "completed"}
     window = read_page_window(
         manifest=manifest,
-        start_page=processing_state.next_start_page,
-        main_window_size=state["main_window_size"],
-        context_window_size=state["context_window_size"],
+        target_page=processing_state.next_start_page,
+        current_topic_index=state.get("current_topic_index", []),
+        include_next_page=state.get("context_window_size", 1) > 0,
     )
     return {"current_window": window}
 
@@ -202,17 +207,22 @@ def read_index_node(state: DocumentIndexingState) -> DocumentIndexingState:
 
 def extract_candidates_node(state: DocumentIndexingState) -> DocumentIndexingState:
     window = state["current_window"]
-    main_pages = {page.page for page in window.main_pages}
+    target_page = window.target_page.page
     raw_candidates = state["client"].extract_candidates(
-        window.main_pages,
-        window.context_pages,
+        window.target_page,
+        window.target_page_assets,
+        window.previous_page_topics,
+        window.next_page,
         state["current_topic_index"],
     )
-    candidates = []
-    for candidate in raw_candidates:
-        restricted = _restrict_candidate_to_main_pages(candidate, main_pages)
-        if restricted is not None:
-            candidates.append(restricted)
+    candidates = [
+        _candidate_from_draft(
+            draft,
+            target_page=target_page,
+            target_page_assets=window.target_page_assets,
+        )
+        for draft in raw_candidates
+    ]
     return {"candidate_topics": candidates}
 
 
@@ -266,7 +276,7 @@ def write_outputs_node(state: DocumentIndexingState) -> DocumentIndexingState:
         raise RuntimeError(f"Index validation failed: {state['validation_report'].warnings}")
 
     window = state["current_window"]
-    last_completed_page = window.main_pages[-1].page
+    last_completed_page = window.target_page.page
     next_start_page = last_completed_page + 1
     manifest = state["manifest"]
     status: Literal["in_progress", "completed"] = (

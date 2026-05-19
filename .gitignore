@@ -3,3 +3,4 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 sample_doc_assets/
+presentations/
