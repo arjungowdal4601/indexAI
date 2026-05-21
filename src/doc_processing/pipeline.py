@@ -10,8 +10,12 @@ from .enrichment import enrich_document
 from .table_detection import detect_table_continuity
 
 
-def run_document_processing(pdf_path: str | Path = PDF_PATH) -> None:
+def run_document_processing(
+    pdf_path: str | Path = PDF_PATH,
+    output_root: str | Path | None = None,
+) -> None:
     pdf_path = Path(pdf_path)
+    output_root_path = Path(output_root) if output_root is not None else None
 
     print("=" * 80)
     print("DOCUMENT PROCESSING PIPELINE")
@@ -27,7 +31,7 @@ def run_document_processing(pdf_path: str | Path = PDF_PATH) -> None:
             "Put your PDF in this folder and update PDF_PATH in config.py."
         )
 
-    docling_output = convert_pdf_with_docling(pdf_path)
+    docling_output = convert_pdf_with_docling(pdf_path, output_root=output_root_path)
     docling_assets_dir = docling_output.docling_assets_dir
     pages_md_dir = docling_output.pages_md_dir
     output_json_path = docling_assets_dir / TABLE_CONTINUITY_JSON_FILE
@@ -36,7 +40,10 @@ def run_document_processing(pdf_path: str | Path = PDF_PATH) -> None:
         page_md_dir=pages_md_dir,
         output_json_path=output_json_path,
     )
-    enriched_output = enrich_document(docling_assets_dir)
+    enriched_output = enrich_document(
+        docling_assets_dir,
+        output_root=output_root_path / "enriched_doc" if output_root_path else None,
+    )
 
     print("-" * 80)
     print("DOCUMENT PROCESSING COMPLETE")

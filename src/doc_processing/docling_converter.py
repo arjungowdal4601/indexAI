@@ -67,9 +67,16 @@ def get_pdf_page_count(pdf_path: Path) -> int:
         return len(reader.pages)
 
 
-def get_docling_output_paths(pdf_path: str | Path) -> DoclingOutput:
+def get_docling_output_paths(
+    pdf_path: str | Path,
+    output_root: str | Path | None = None,
+) -> DoclingOutput:
     pdf_path = Path(pdf_path).resolve()
-    asset_root = pdf_path.parent / f"{pdf_path.stem}{ASSET_ROOT_SUFFIX}"
+    asset_root = (
+        Path(output_root).resolve()
+        if output_root is not None
+        else pdf_path.parent / f"{pdf_path.stem}{ASSET_ROOT_SUFFIX}"
+    )
     docling_assets = asset_root / DOCLING_ASSET_FOLDER
 
     return DoclingOutput(
@@ -197,13 +204,14 @@ def convert_pdf_with_docling(
     pdf_path: str | Path,
     page_range: Optional[Tuple[int, int]] = None,
     images_scale: float = IMAGES_SCALE,
+    output_root: str | Path | None = None,
 ) -> DoclingOutput:
     """Convert a PDF into raw page-wise Docling markdown and raw assets."""
     pdf_path = Path(pdf_path).resolve()
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    output = get_docling_output_paths(pdf_path)
+    output = get_docling_output_paths(pdf_path, output_root=output_root)
     recreate_docling_folders(output)
 
     if page_range is not None:

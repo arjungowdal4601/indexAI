@@ -1,0 +1,69 @@
+"""Backend job registry service."""
+
+from __future__ import annotations
+
+from fastapi import HTTPException
+
+from backend.schemas import JobResponse
+from backend.services import registry
+
+
+def _job_response(row: dict[str, str]) -> JobResponse:
+    return JobResponse(
+        job_id=row["job_id"],
+        job_type=row["job_type"],  # type: ignore[arg-type]
+        status=row["status"],
+        document_id=row.get("document_id") or None,
+        comparison_id=row.get("comparison_id") or None,
+        started_at=row.get("started_at") or None,
+        finished_at=row.get("finished_at") or None,
+        error_message=row.get("error_message") or None,
+    )
+
+
+def create_job(
+    job_type: str,
+    document_id: str = "",
+    comparison_id: str = "",
+    log_path: str = "",
+) -> JobResponse:
+    job_id = registry.next_job_id()
+    row = {
+        "job_id": job_id,
+        "job_type": job_type,
+        "document_id": document_id,
+        "comparison_id": comparison_id,
+        "status": "queued",
+        "started_at": "",
+        "finished_at": "",
+        "error_message": "",
+        "log_path": log_path,
+    }
+    registry.upsert_job(row)
+    return _job_response(row)
+
+
+def get_job(job_id: str) -> JobResponse:
+    row = registry.get_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return _job_response(row)
+
+
+def update_job(job_id: str, **updates: object) -> None:
+    row = registry.get_job(job_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    registry.upsert_job({**row, **updates})
+
+
+def mark_job_running(job_id: str) -> None:
+    update_job(job_id, status="running", started_at=registry.utc_now(), error_message="")
+
+
+def mark_job_completed(job_id: str) -> None:
+    update_job(job_id, status="completed", finished_at=registry.utc_now(), error_message="")
+
+
+def mark_job_failed(job_id: str, error: Exception) -> None:
+    update_job(job_id, status="failed", finished_at=registry.utc_now(), error_message=str(error))

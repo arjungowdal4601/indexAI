@@ -13,6 +13,10 @@ Topic retrieval is a separate query-time pipeline that reads the topic index, lo
 No LLM is used during Docling conversion or table-continuity detection. Enrichment and topic indexing use LangChain chat prompt templates and `langchain-openai`; indexing uses schema-based structured output.
 Retrieval also uses LangGraph, LangChain chat prompt templates, and schema-based structured output.
 
+The backend MVP wraps these pipelines with FastAPI, CSV registries, and canonical
+`storage/` folders for upload, processing, regulatory indexing, SOP-vs-regulatory
+comparison, report access, and page-image serving.
+
 ## Structure
 
 ```text
@@ -179,3 +183,59 @@ python src/document_retrieval/main.py "What is scaled dot-product attention?" --
 ```
 
 The retrieval output includes a deterministic retrieval trace, page files read, memory mode, final answer, pages used, and any missing information reported by the model.
+
+## Run Backend MVP
+
+Install dependencies, then start FastAPI from the project root:
+
+```bash
+pip install -r requirements.txt
+uvicorn backend.app:app --reload
+```
+
+Start the Streamlit frontend in a second terminal:
+
+```powershell
+$env:DOC_COMPARING_API_BASE_URL = "http://127.0.0.1:8000"
+streamlit run frontend/streamlit_app.py
+```
+
+Or run both backend and frontend together from the `compute` Conda environment:
+
+```powershell
+.\run_comparison_app.ps1
+```
+
+The script starts FastAPI on `http://127.0.0.1:8000` and Streamlit on
+`http://127.0.0.1:8501`, then stops both services when you press `Ctrl+C`.
+
+The backend uses `storage/` by default. Override it for tests or alternate
+workspaces with:
+
+```bash
+set DOC_COMPARING_STORAGE_ROOT=C:\path\to\storage
+```
+
+Primary endpoints:
+
+```text
+POST /documents/upload
+GET /documents
+POST /documents/{document_id}/process
+POST /documents/{document_id}/index
+GET /jobs/{job_id}
+POST /comparisons
+GET /comparisons/{comparison_id}
+GET /comparisons/{comparison_id}/report
+GET /comparisons/{comparison_id}/pages/{sop_page_number}
+GET /assets/documents/{document_id}/page-image/{page_number}
+```
+
+Canonical backend artifacts are written under:
+
+```text
+storage/documents/regulatory/<reg_id>/
+storage/documents/sop/<sop_id>/
+storage/comparisons/<comparison_id>/
+storage/registries/
+```
