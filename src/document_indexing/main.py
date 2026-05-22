@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 if __package__ in (None, ""):
     src_dir = Path(__file__).resolve().parents[1]
@@ -48,6 +48,7 @@ def run_indexing_pipeline(
     main_window_size: int = DEFAULT_MAIN_WINDOW_SIZE,
     context_window_size: int = DEFAULT_CONTEXT_WINDOW_SIZE,
     token_limit: int = DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> IndexingOutput:
     pages_folder = Path(pages_folder_path)
     output_folder = (
@@ -64,6 +65,7 @@ def run_indexing_pipeline(
         main_window_size=main_window_size,
         context_window_size=context_window_size,
         token_limit=token_limit,
+        event_callback=event_callback,
     )
 
 

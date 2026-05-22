@@ -24,6 +24,8 @@ STATUS_COLORS = {
     "needs_human_review": "#6941c6",
     "not_applicable": "#667085",
 }
+PROCESSING_BLUE = "#2f80ed"
+INDEXING_GREEN = "#27ae60"
 
 
 def _fragment(run_every: str):
@@ -77,6 +79,7 @@ def document_table(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Indexing": item["indexing_status"],
             "Ready": item["ready_for_comparison"],
             "Pages": item.get("page_count") or "",
+            "Active Job": item.get("active_job_id") or "",
             "Error": item.get("error_message") or "",
         }
         for item in documents
@@ -118,6 +121,140 @@ def report_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 def format_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+def latest_progress(
+    events: list[dict[str, Any]],
+    stage: str,
+    fallback_total: int = 0,
+    phase_completed: bool = False,
+) -> tuple[int, int]:
+    candidates = [
+        event
+        for event in events
+        if event.get("stage") == stage
+        and event.get("progress_current") is not None
+        and event.get("progress_total")
+    ]
+    if candidates:
+        last = candidates[-1]
+        current = int(last["progress_current"])
+        total = int(last["progress_total"])
+    else:
+        current = 0
+        total = int(fallback_total or 0)
+    if phase_completed and total:
+        current = total
+    return current, total
+
+
+def colored_progress(label: str, current: int, total: int, color: str) -> None:
+    ratio = 0 if not total else max(0, min(1, current / total))
+    pct = int(ratio * 100)
+    st.markdown(
+        f"""
+        <div style="margin: 0.35rem 0 0.8rem 0;">
+          <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 0.2rem;">
+            {label}: {current} / {total} pages
+          </div>
+          <div style="width: 100%; height: 10px; background: #2d333b; border-radius: 999px; overflow: hidden;">
+            <div style="width: {pct}%; height: 10px; background: {color}; border-radius: 999px;"></div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+@_fragment(run_every="2s")
+def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str | None) -> None:
+    if not job_id and not document.get("ready_for_comparison"):
+        return
+    job = None
+    events: list[dict[str, Any]] = []
+    if job_id:
+        job = run_api_call("Load prepare job", lambda: api_client.get_job(job_id, base_url))
+        events_payload = run_api_call(
+            "Load prepare job events",
+            lambda: api_client.get_job_events(job_id, base_url),
+        )
+        events = events_payload.get("events", []) if events_payload else []
+
+    fallback_total = int(document.get("page_count") or 0)
+    processing_done = document.get("processing_status") == "completed"
+    indexing_done = document.get("indexing_status") == "completed" or document.get("ready_for_comparison")
+    processing_current, processing_total = latest_progress(
+        events,
+        "document_processing",
+        fallback_total=fallback_total,
+        phase_completed=processing_done,
+    )
+    indexing_current, indexing_total = latest_progress(
+        events,
+        "document_indexing",
+        fallback_total=fallback_total or processing_total,
+        phase_completed=indexing_done,
+    )
+
+    if indexing_done or (job and job.get("status") == "completed"):
+        st.success("Indexed")
+    elif processing_done:
+        st.caption("Indexing")
+    else:
+        st.caption("Processing")
+
+    colored_progress("Processing", processing_current, processing_total, PROCESSING_BLUE)
+    colored_progress("Indexing", indexing_current, indexing_total, INDEXING_GREEN)
+
+    if events:
+        st.caption(events[-1].get("message", ""))
+    if job and job.get("status") == "failed":
+        st.error(job.get("error_message") or "Prepare job failed.")
+
+
+@_fragment(run_every="2s")
+def render_comparison_progress(base_url: str, comparison_id: str | None) -> None:
+    if not comparison_id:
+        return
+    comparison = run_api_call(
+        "Load comparison",
+        lambda: api_client.get_comparison(comparison_id, base_url),
+    )
+    if not comparison:
+        return
+
+    status = comparison.get("status", "queued")
+    st.subheader("Comparison")
+    st.markdown(f"Comparison ID: `{comparison['comparison_id']}`")
+    state = "complete" if status == "completed" else "error" if status == "failed" else "running"
+    label = (
+        "Comparison complete"
+        if status == "completed"
+        else "Comparison failed"
+        if status == "failed"
+        else "Comparison running"
+    )
+    with st.status(label, state=state, expanded=status in {"queued", "running"}) as status_box:
+        st.markdown(f"Status: {status_badge(status)}", unsafe_allow_html=True)
+
+        message = comparison.get("progress_message") or "Waiting for comparison progress."
+        st.write(f"Progress: {message}")
+
+        current = comparison.get("progress_current")
+        total = comparison.get("progress_total")
+        if current is not None and total:
+            st.progress(min(1.0, float(current) / float(total)))
+        elif status in {"queued", "running"}:
+            st.progress(0.0)
+
+        if status == "completed":
+            status_box.update(label="Comparison complete", state="complete", expanded=False)
+            st.success("Comparison complete. Open Review Report to inspect findings.")
+        elif status == "failed":
+            status_box.update(label="Comparison failed", state="error", expanded=True)
+            st.error(comparison.get("error_message") or "Comparison failed.")
+        else:
+            status_box.update(label="Comparison running", state="running", expanded=True)
 
 
 @_fragment(run_every="2s")

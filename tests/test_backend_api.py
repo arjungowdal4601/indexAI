@@ -10,6 +10,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
+from backend.services import registry
 from document_retrieval.schemas import FinalAnswer, RetrievalOutput, RetrievalTrace
 
 
@@ -18,7 +19,7 @@ def read_csv_rows(path: Path) -> list[dict]:
         return list(csv.DictReader(file))
 
 
-def fake_process_document(_pdf_path, output_root=None):
+def fake_process_document(_pdf_path, output_root=None, event_callback=None):
     root = Path(output_root)
     pages = root / "enriched_doc" / "pages_md"
     images = root / "docling_assets" / "page_images"
@@ -30,6 +31,8 @@ def fake_process_document(_pdf_path, output_root=None):
         b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
         b"\x00\x00\x00\x90wS\xde\x00\x00\x00\x00IEND\xaeB`\x82"
     )
+    if event_callback:
+        event_callback("document_processing", "processing_page", "Processing page 1 of 1", 1, 1)
 
 
 def fake_index_document(pages_folder_path, output_folder_path, document_id, **_kwargs):
@@ -58,6 +61,15 @@ def fake_index_document(pages_folder_path, output_folder_path, document_id, **_k
 
 
 def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, comparison_run_id, **_kwargs):
+    event_callback = _kwargs.get("event_callback")
+    if event_callback:
+        event_callback(
+            "comparison",
+            "plan_sop_page",
+            "Planning comparison for SOP page 1.",
+            1,
+            1,
+        )
     run_dir = Path(comparison_run_dir)
     page_reports = run_dir / "page_reports"
     page_reports.mkdir(parents=True, exist_ok=True)
@@ -185,6 +197,17 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual([row["document_id"] for row in rows], ["reg_000001", "sop_000001"])
         self.assertEqual(rows[0]["indexing_status"], "not_started")
         self.assertEqual(rows[1]["indexing_status"], "not_started")
+        self.assertIn("active_job_id", rows[0])
+        self.assertEqual(rows[0]["active_job_id"], "")
+        self.assertIsNone(regulatory["active_job_id"])
+
+    def test_document_response_includes_active_job_id(self):
+        sop = self.upload_pdf("sop")
+
+        document = self.client.get("/documents", params={"document_type": "sop"}).json()["documents"][0]
+
+        self.assertIn("active_job_id", document)
+        self.assertIsNone(document["active_job_id"])
 
     def test_upload_rejects_non_pdf(self):
         response = self.client.post(
@@ -263,6 +286,86 @@ class BackendApiTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["topic_index_path"], "indexing_output/topic_index.json")
 
+    def test_prepare_endpoint_queues_prepare_document_job(self):
+        sop = self.upload_pdf("sop")
+
+        with patch(
+            "backend.services.processing_service.run_document_processing",
+            side_effect=fake_process_document,
+        ), patch(
+            "backend.services.indexing_service.run_indexing_pipeline",
+            side_effect=fake_index_document,
+        ):
+            response = self.client.post(f"/documents/{sop['document_id']}/prepare")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        job = response.json()
+        self.assertEqual(job["job_type"], "prepare_document")
+        self.assertEqual(job["document_id"], sop["document_id"])
+        document = self.client.get("/documents", params={"document_type": "sop"}).json()["documents"][0]
+        self.assertEqual(document["active_job_id"], job["job_id"])
+        self.assertTrue(document["ready_for_comparison"])
+        self.assertEqual(document["processing_status"], "completed")
+        self.assertEqual(document["indexing_status"], "completed")
+
+    def test_prepare_job_runs_processing_then_indexing(self):
+        sop = self.upload_pdf("sop")
+        calls = []
+
+        def process_then_record(*args, **kwargs):
+            calls.append("process")
+            return fake_process_document(*args, **kwargs)
+
+        def index_then_record(*args, **kwargs):
+            calls.append("index")
+            return fake_index_document(*args, **kwargs)
+
+        with patch(
+            "backend.services.processing_service.run_document_processing",
+            side_effect=process_then_record,
+        ), patch(
+            "backend.services.indexing_service.run_indexing_pipeline",
+            side_effect=index_then_record,
+        ):
+            response = self.client.post(f"/documents/{sop['document_id']}/prepare")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(calls, ["process", "index"])
+
+    def test_prepare_rejects_already_ready_document(self):
+        sop = self.upload_pdf("sop")
+        self.process_document(sop["document_id"])
+        self.index_document(sop["document_id"])
+
+        response = self.client.post(f"/documents/{sop['document_id']}/prepare")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Document is already indexed", response.text)
+
+    def test_prepare_rejects_duplicate_running_prepare(self):
+        sop = self.upload_pdf("sop")
+        job = registry.next_job_id()
+        registry.upsert_job(
+            {
+                "job_id": job,
+                "job_type": "prepare_document",
+                "document_id": sop["document_id"],
+                "comparison_id": "",
+                "status": "running",
+                "started_at": "",
+                "finished_at": "",
+                "error_message": "",
+                "log_path": "",
+            }
+        )
+        document = registry.get_document(sop["document_id"])
+        registry.upsert_document({**document, "active_job_id": job})
+
+        response = self.client.post(f"/documents/{sop['document_id']}/prepare")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("already running", response.text)
+
     def test_comparison_creation_writes_request_reports_and_registry(self):
         regulatory = self.upload_pdf("regulatory")
         sop = self.upload_pdf("sop")
@@ -293,6 +396,9 @@ class BackendApiTests(unittest.TestCase):
 
         status = self.client.get(f"/comparisons/{comparison_id}").json()
         self.assertEqual(status["status"], "completed")
+        self.assertEqual(status["progress_message"], "Comparison complete.")
+        self.assertEqual(status["progress_current"], 1)
+        self.assertEqual(status["progress_total"], 1)
         report = self.client.get(f"/comparisons/{comparison_id}/report").json()
         self.assertEqual(report["summary"]["total_findings"], 1)
         page = self.client.get(f"/comparisons/{comparison_id}/pages/1").json()

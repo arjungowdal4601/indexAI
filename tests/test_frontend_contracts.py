@@ -99,6 +99,39 @@ class FrontendApiClientTests(unittest.TestCase):
         self.assertEqual(captured["url"], "http://api.local/jobs/job_000001/events")
         self.assertEqual(captured["method"], "GET")
 
+    def test_start_prepare_calls_prepare_endpoint(self):
+        from frontend import api_client
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            captured["timeout"] = timeout
+            return FakeHttpResponse(
+                {
+                    "job_id": "job_000001",
+                    "job_type": "prepare_document",
+                    "status": "queued",
+                    "document_id": "sop_000001",
+                    "comparison_id": None,
+                    "started_at": None,
+                    "finished_at": None,
+                    "error_message": None,
+                }
+            )
+
+        with patch.dict(
+            os.environ,
+            {"DOC_COMPARING_API_BASE_URL": "http://api.local"},
+        ), patch("frontend.api_client.urlopen", side_effect=fake_urlopen):
+            result = api_client.start_prepare("sop_000001")
+
+        self.assertEqual(result["job_type"], "prepare_document")
+        self.assertEqual(captured["url"], "http://api.local/documents/sop_000001/prepare")
+        self.assertEqual(captured["method"], "POST")
+        self.assertEqual(captured["timeout"], 30)
+
     def test_copilot_query_posts_selected_document_query(self):
         from frontend import api_client
 
@@ -171,6 +204,63 @@ class FrontendContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, combined)
         self.assertIn("api_client", combined)
         self.assertIn("/assets/documents/", combined)
+
+    def test_upload_prepare_page_uses_prepare_not_process_or_index(self):
+        source = Path("frontend/pages/1_Upload_and_Prepare.py").read_text(encoding="utf-8")
+
+        self.assertIn("start_prepare", source)
+        self.assertNotIn("start_processing", source)
+        self.assertNotIn("start_indexing", source)
+        self.assertNotIn("Job Status", source)
+
+    def test_compare_page_hides_job_id_and_polls_by_comparison_id(self):
+        source = Path("frontend/pages/2_Compare_Documents.py").read_text(encoding="utf-8")
+
+        self.assertIn("render_comparison_progress", source)
+        self.assertIn("get_comparison", source)
+        self.assertNotIn("render_job_monitor", source)
+        self.assertNotIn("last_job_id", source)
+        self.assertNotIn("Job ID", source)
+        self.assertNotIn("st.text_input", source)
+
+    def test_comparison_progress_uses_status_container_without_job_id(self):
+        source = Path("frontend/ui_components.py").read_text(encoding="utf-8")
+        function_source = source.split("def render_comparison_progress", 1)[1].split(
+            "def render_job_monitor",
+            1,
+        )[0]
+
+        self.assertIn("st.status", function_source)
+        self.assertIn("Comparison running", function_source)
+        self.assertNotIn("job_id", function_source)
+
+    def test_latest_progress_splits_processing_and_indexing_events(self):
+        from frontend.ui_components import latest_progress
+
+        events = [
+            {
+                "stage": "document_processing",
+                "progress_current": 2,
+                "progress_total": 5,
+            },
+            {
+                "stage": "document_indexing",
+                "progress_current": 1,
+                "progress_total": 5,
+            },
+            {
+                "stage": "document_processing",
+                "progress_current": 4,
+                "progress_total": 5,
+            },
+        ]
+
+        self.assertEqual(latest_progress(events, "document_processing"), (4, 5))
+        self.assertEqual(latest_progress(events, "document_indexing"), (1, 5))
+        self.assertEqual(
+            latest_progress(events, "document_indexing", phase_completed=True),
+            (5, 5),
+        )
 
 
 if __name__ == "__main__":

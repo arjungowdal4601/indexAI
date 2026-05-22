@@ -9,7 +9,7 @@ from frontend.ui_components import (
     api_base_url_input,
     configure_page,
     document_option,
-    render_job_monitor,
+    render_comparison_progress,
     ready_documents,
     run_api_call,
 )
@@ -49,10 +49,13 @@ def main() -> None:
         )
 
     disabled = not selected_reg or not selected_sop
-    active_job = st.session_state.get("last_job_id", "")
-    if active_job:
-        job = run_api_call("Load active job", lambda: api_client.get_job(active_job, base_url))
-        if job and job.get("status") in {"queued", "running"}:
+    active_comparison_id = st.session_state.get("active_comparison_id", "")
+    if active_comparison_id:
+        comparison = run_api_call(
+            "Load active comparison",
+            lambda: api_client.get_comparison(active_comparison_id, base_url),
+        )
+        if comparison and comparison.get("status") in {"queued", "running"}:
             disabled = True
     if st.button("Run Comparison", type="primary", disabled=disabled):
         result = run_api_call(
@@ -65,29 +68,11 @@ def main() -> None:
         )
         if result:
             st.session_state["active_comparison_id"] = result["comparison_id"]
-            st.session_state["last_job_id"] = result["job_id"]
             st.success(f"Comparison queued: {result['comparison_id']}")
             st.rerun()
 
     st.divider()
-    st.subheader("Comparison Status")
-    comparison_id = st.text_input(
-        "Comparison ID",
-        value=st.session_state.get("active_comparison_id", ""),
-    )
-    comparison = None
-    if comparison_id:
-        comparison = run_api_call(
-            "Load comparison",
-            lambda: api_client.get_comparison(comparison_id, base_url),
-        )
-    if comparison:
-        st.json(comparison)
-        if comparison.get("status") == "completed":
-            st.success("Comparison complete. Open Review Report to inspect the page-wise findings.")
-
-    job_id = st.text_input("Job ID", value=st.session_state.get("last_job_id", ""))
-    render_job_monitor(base_url, job_id)
+    render_comparison_progress(base_url, st.session_state.get("active_comparison_id"))
 
 
 if __name__ == "__main__":

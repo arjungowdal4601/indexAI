@@ -12,7 +12,7 @@ import gc
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from pypdf import PdfReader
 
@@ -205,6 +205,7 @@ def convert_pdf_with_docling(
     page_range: Optional[Tuple[int, int]] = None,
     images_scale: float = IMAGES_SCALE,
     output_root: str | Path | None = None,
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> DoclingOutput:
     """Convert a PDF into raw page-wise Docling markdown and raw assets."""
     pdf_path = Path(pdf_path).resolve()
@@ -228,9 +229,25 @@ def convert_pdf_with_docling(
 
     print(f"Docling conversion started: {pdf_path.name}")
     print(f"Pages: {start_page} to {end_page}")
+    if event_callback is not None:
+        event_callback(
+            "document_processing",
+            "processing_page",
+            f"Processing page 0 of {end_page}",
+            0,
+            end_page,
+        )
 
     for page_no in range(start_page, end_page + 1):
         print(f"  - converting page {page_no}/{end_page}")
+        if event_callback is not None:
+            event_callback(
+                "document_processing",
+                "processing_page",
+                f"Processing page {page_no} of {end_page}",
+                page_no,
+                end_page,
+            )
 
         conversion_result = convert_pdf_page(converter, pdf_path, page_no)
         doc = conversion_result.document

@@ -37,6 +37,7 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 main_window_size=1,
                 context_window_size=1,
                 token_limit=80000,
+                event_callback=None,
             )
 
 

@@ -11,6 +11,7 @@ JobType = Literal[
     "process_document",
     "index_regulatory",
     "index_document",
+    "prepare_document",
     "compare_documents",
 ]
 RegistryStatus = Literal[
@@ -30,6 +31,7 @@ class DocumentResponse(BaseModel):
     indexing_status: str
     ready_for_comparison: bool
     page_count: int | None = None
+    active_job_id: str | None = None
     error_message: str | None = None
 
 
@@ -82,6 +84,9 @@ class ComparisonStatusResponse(BaseModel):
     report_json_path: str | None = None
     report_md_path: str | None = None
     error_message: str | None = None
+    progress_message: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
 
 
 class CopilotQueryRequest(BaseModel):

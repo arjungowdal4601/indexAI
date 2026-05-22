@@ -414,6 +414,7 @@ class DocumentIndexingGraphTests(unittest.TestCase):
             root = Path(temp_dir)
             pages_dir = root / "pages_md"
             output_dir = root / "indexing_output"
+            events = []
             pages_dir.mkdir()
             (pages_dir / "page_0001.md").write_text(
                 "\n".join(
@@ -454,6 +455,7 @@ class DocumentIndexingGraphTests(unittest.TestCase):
                 main_window_size=1,
                 context_window_size=1,
                 client=FakeIndexingClient(),
+                event_callback=lambda *args: events.append(args),
             )
 
             topic_index = json.loads(output.topic_index_path.read_text())
@@ -489,6 +491,14 @@ class DocumentIndexingGraphTests(unittest.TestCase):
             self.assertIn("Target page: 2", log_text)
             self.assertIn("Previous page indexed topics: Neutral policy requirements", log_text)
             self.assertIn("Next context page: 3", log_text)
+            self.assertIn(
+                ("document_indexing", "indexing_page", "Indexing page 1 of 3", 1, 3),
+                events,
+            )
+            self.assertIn(
+                ("document_indexing", "indexing_page", "Indexing page 3 of 3", 3, 3),
+                events,
+            )
 
 
 if __name__ == "__main__":

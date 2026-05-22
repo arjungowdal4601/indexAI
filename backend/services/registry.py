@@ -21,6 +21,7 @@ DOCUMENT_FIELDS = [
     "indexing_status",
     "ready_for_comparison",
     "page_count",
+    "active_job_id",
     "error_message",
 ]
 

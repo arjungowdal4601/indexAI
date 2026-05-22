@@ -84,6 +84,19 @@ def start_processing(document_id: str, base_url: str | None = None) -> dict[str,
     return _request_json("POST", f"/documents/{document_id}/process", base_url=base_url)
 
 
+def start_prepare(
+    document_id: str,
+    base_url: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        f"/documents/{document_id}/prepare",
+        base_url=base_url,
+        timeout=timeout,
+    )
+
+
 def start_indexing(document_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("POST", f"/documents/{document_id}/index", base_url=base_url)
 

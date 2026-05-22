@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from .config import PDF_PATH, TABLE_CONTINUITY_JSON_FILE
 from .docling_converter import convert_pdf_with_docling
@@ -13,6 +14,7 @@ from .table_detection import detect_table_continuity
 def run_document_processing(
     pdf_path: str | Path = PDF_PATH,
     output_root: str | Path | None = None,
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> None:
     pdf_path = Path(pdf_path)
     output_root_path = Path(output_root) if output_root is not None else None
@@ -31,7 +33,11 @@ def run_document_processing(
             "Put your PDF in this folder and update PDF_PATH in config.py."
         )
 
-    docling_output = convert_pdf_with_docling(pdf_path, output_root=output_root_path)
+    docling_output = convert_pdf_with_docling(
+        pdf_path,
+        output_root=output_root_path,
+        event_callback=event_callback,
+    )
     docling_assets_dir = docling_output.docling_assets_dir
     pages_md_dir = docling_output.pages_md_dir
     output_json_path = docling_assets_dir / TABLE_CONTINUITY_JSON_FILE
@@ -44,6 +50,15 @@ def run_document_processing(
         docling_assets_dir,
         output_root=output_root_path / "enriched_doc" if output_root_path else None,
     )
+    if event_callback is not None:
+        total_pages = len(list(enriched_output.pages_md_dir.glob("page_*.md")))
+        event_callback(
+            "document_processing",
+            "processing_page",
+            f"Processing page {total_pages} of {total_pages}",
+            total_pages,
+            total_pages,
+        )
 
     print("-" * 80)
     print("DOCUMENT PROCESSING COMPLETE")

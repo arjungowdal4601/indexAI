@@ -13,7 +13,13 @@ from backend.schemas import (
     DocumentResponse,
     JobResponse,
 )
-from backend.services import copilot_service, document_service, indexing_service, processing_service
+from backend.services import (
+    copilot_service,
+    document_service,
+    indexing_service,
+    prepare_service,
+    processing_service,
+)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -44,6 +50,14 @@ def process_document(
     background_tasks: BackgroundTasks,
 ) -> JobResponse:
     return processing_service.start_processing_job(document_id, background_tasks)
+
+
+@router.post("/{document_id}/prepare", response_model=JobResponse)
+def prepare_document(
+    document_id: str,
+    background_tasks: BackgroundTasks,
+) -> JobResponse:
+    return prepare_service.start_prepare_job(document_id, background_tasks)
 
 
 @router.post("/{document_id}/index", response_model=JobResponse)

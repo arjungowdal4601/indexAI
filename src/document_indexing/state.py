@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 from .llm import TopicIndexingClient
 from .schemas import (
@@ -24,6 +24,7 @@ class DocumentIndexingState(TypedDict, total=False):
     main_window_size: int
     context_window_size: int
     token_limit: int
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None
     processing_state: ProcessingState
     manifest: PageManifest
     current_window: PageWindow

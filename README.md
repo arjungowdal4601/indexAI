@@ -212,8 +212,13 @@ The script starts FastAPI on `http://127.0.0.1:8000` and Streamlit on
 In the framework UI, both regulatory and SOP documents follow the same lifecycle:
 
 ```text
-upload -> process -> index -> ready
+upload -> index button -> processing -> indexing -> ready
 ```
+
+The Streamlit Upload and Prepare page uses a single `Index` button. That button
+calls `POST /documents/{document_id}/prepare`, and the backend runs processing
+and indexing sequentially before marking the document ready. The lower-level
+`/process` and `/index` endpoints remain available for API compatibility.
 
 SOP indexing writes a real `indexing_output/topic_index.json` for uniform document
 management and Document Co-pilot Q&A. SOP-vs-regulatory comparison still uses only
@@ -232,6 +237,7 @@ Primary endpoints:
 ```text
 POST /documents/upload
 GET /documents
+POST /documents/{document_id}/prepare
 POST /documents/{document_id}/process
 POST /documents/{document_id}/index
 GET /jobs/{job_id}

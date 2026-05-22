@@ -9,7 +9,7 @@ from frontend.ui_components import (
     api_base_url_input,
     configure_page,
     document_table,
-    render_job_monitor,
+    render_prepare_progress,
     run_api_call,
 )
 
@@ -38,35 +38,40 @@ def upload_panel(document_type: str, base_url: str) -> None:
 
 
 def render_document_actions(document: dict, base_url: str) -> None:
+    st.session_state.setdefault("document_jobs", {})
     cols = st.columns([2, 2, 2, 2, 3])
     cols[0].write(document["document_id"])
     cols[1].write(document["processing_status"])
     cols[2].write(document["indexing_status"])
     cols[3].write("Ready" if document.get("ready_for_comparison") else "Not ready")
     with cols[4]:
-        process_disabled = document["processing_status"] in {"queued", "running"}
-        if st.button("Process", key=f"process-{document['document_id']}", disabled=process_disabled):
-            job = run_api_call(
-                "Start processing",
-                lambda: api_client.start_processing(document["document_id"], base_url),
-            )
-            if job:
-                st.session_state["last_job_id"] = job["job_id"]
-                st.success(f"Processing job queued: {job['job_id']}")
-                st.rerun()
-        index_disabled = (
-            document["processing_status"] != "completed"
-            or document["indexing_status"] in {"queued", "running", "completed"}
+        running = (
+            document["processing_status"] in {"queued", "running"}
+            or document["indexing_status"] in {"queued", "running"}
         )
-        if st.button("Index", key=f"index-{document['document_id']}", disabled=index_disabled):
-            job = run_api_call(
-                "Start indexing",
-                lambda: api_client.start_indexing(document["document_id"], base_url),
-            )
-            if job:
-                st.session_state["last_job_id"] = job["job_id"]
-                st.success(f"Indexing job queued: {job['job_id']}")
-                st.rerun()
+        ready = bool(document.get("ready_for_comparison"))
+        failed = (
+            document["processing_status"] == "failed"
+            or document["indexing_status"] == "failed"
+        )
+        if ready:
+            st.write("Indexed")
+        else:
+            label = "Retry Index" if failed else "Index"
+            if st.button(label, key=f"prepare-{document['document_id']}", disabled=running):
+                job = run_api_call(
+                    "Start prepare",
+                    lambda: api_client.start_prepare(document["document_id"], base_url),
+                )
+                if job:
+                    st.session_state["document_jobs"][document["document_id"]] = job["job_id"]
+                    st.success(f"Prepare job queued: {job['job_id']}")
+                    st.rerun()
+    job_id = (
+        st.session_state["document_jobs"].get(document["document_id"])
+        or document.get("active_job_id")
+    )
+    render_prepare_progress(base_url, document, job_id)
 
 
 def document_list(document_type: str, base_url: str) -> None:
@@ -95,12 +100,6 @@ def main() -> None:
     with right:
         upload_panel("sop", base_url)
         document_list("sop", base_url)
-
-    st.divider()
-    st.subheader("Job Status")
-    last_job = st.session_state.get("last_job_id", "")
-    job_id = st.text_input("Job ID", value=last_job)
-    render_job_monitor(base_url, job_id)
 
 
 if __name__ == "__main__":

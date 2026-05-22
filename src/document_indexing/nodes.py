@@ -299,5 +299,14 @@ def write_outputs_node(state: DocumentIndexingState) -> DocumentIndexingState:
     write_validation_report(state["output_folder_path"], state["validation_report"])
     write_processing_state(state["output_folder_path"], next_state)
     append_revision_log(state["output_folder_path"], state["revision_log_entry"])
+    callback = state.get("event_callback")
+    if callback is not None:
+        callback(
+            "document_indexing",
+            "indexing_page",
+            f"Indexing page {last_completed_page} of {manifest.total_pages}",
+            last_completed_page,
+            manifest.total_pages,
+        )
 
     return {"processing_state": next_state, "status": status}

@@ -26,6 +26,7 @@ def _document_response(row: dict[str, str]) -> DocumentResponse:
         indexing_status=row["indexing_status"],
         ready_for_comparison=_bool(row["ready_for_comparison"]),
         page_count=int(page_count) if page_count else None,
+        active_job_id=row.get("active_job_id") or None,
         error_message=row.get("error_message") or None,
     )
 
@@ -69,6 +70,7 @@ def upload_document(document_type: str, original_filename: str, content: bytes) 
         "indexing_status": "not_started",
         "ready_for_comparison": "false",
         "page_count": "",
+        "active_job_id": "",
         "error_message": "",
     }
     registry.upsert_document(row)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from langgraph.graph import END, StateGraph
 
@@ -83,6 +84,7 @@ def run_document_indexing(
     context_window_size: int = DEFAULT_CONTEXT_WINDOW_SIZE,
     client: TopicIndexingClient | None = None,
     token_limit: int = DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> IndexingOutput:
     output_folder = Path(output_folder_path)
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -97,6 +99,7 @@ def run_document_indexing(
             "main_window_size": int(main_window_size),
             "context_window_size": int(context_window_size),
             "token_limit": int(token_limit),
+            "event_callback": event_callback,
             "client": indexing_client,
             "step_number": 0,
         }
