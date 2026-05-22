@@ -92,6 +92,10 @@ def get_job(job_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", f"/jobs/{job_id}", base_url=base_url)
 
 
+def get_job_events(job_id: str, base_url: str | None = None) -> dict[str, Any]:
+    return _request_json("GET", f"/jobs/{job_id}/events", base_url=base_url)
+
+
 def create_comparison(
     regulatory_document_id: str,
     sop_document_id: str,
@@ -125,6 +129,26 @@ def get_page_report(
         "GET",
         f"/comparisons/{comparison_id}/pages/{int(sop_page_number)}",
         base_url=base_url,
+    )
+
+
+def copilot_query(
+    document_id: str,
+    query: str,
+    base_url: str | None = None,
+    max_direct_pages: int = 10,
+    max_direct_estimated_tokens: int = 70000,
+) -> dict[str, Any]:
+    return _request_json(
+        "POST",
+        f"/documents/{document_id}/copilot/query",
+        payload={
+            "query": query,
+            "max_direct_pages": max_direct_pages,
+            "max_direct_estimated_tokens": max_direct_estimated_tokens,
+        },
+        base_url=base_url,
+        timeout=120,
     )
 
 

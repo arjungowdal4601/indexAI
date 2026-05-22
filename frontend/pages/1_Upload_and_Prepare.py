@@ -9,6 +9,7 @@ from frontend.ui_components import (
     api_base_url_input,
     configure_page,
     document_table,
+    render_job_monitor,
     run_api_call,
 )
 
@@ -37,11 +38,12 @@ def upload_panel(document_type: str, base_url: str) -> None:
 
 
 def render_document_actions(document: dict, base_url: str) -> None:
-    cols = st.columns([2, 2, 2, 3])
+    cols = st.columns([2, 2, 2, 2, 3])
     cols[0].write(document["document_id"])
     cols[1].write(document["processing_status"])
     cols[2].write(document["indexing_status"])
-    with cols[3]:
+    cols[3].write("Ready" if document.get("ready_for_comparison") else "Not ready")
+    with cols[4]:
         process_disabled = document["processing_status"] in {"queued", "running"}
         if st.button("Process", key=f"process-{document['document_id']}", disabled=process_disabled):
             job = run_api_call(
@@ -52,20 +54,19 @@ def render_document_actions(document: dict, base_url: str) -> None:
                 st.session_state["last_job_id"] = job["job_id"]
                 st.success(f"Processing job queued: {job['job_id']}")
                 st.rerun()
-        if document["document_type"] == "regulatory":
-            index_disabled = (
-                document["processing_status"] != "completed"
-                or document["indexing_status"] in {"queued", "running", "completed"}
+        index_disabled = (
+            document["processing_status"] != "completed"
+            or document["indexing_status"] in {"queued", "running", "completed"}
+        )
+        if st.button("Index", key=f"index-{document['document_id']}", disabled=index_disabled):
+            job = run_api_call(
+                "Start indexing",
+                lambda: api_client.start_indexing(document["document_id"], base_url),
             )
-            if st.button("Index", key=f"index-{document['document_id']}", disabled=index_disabled):
-                job = run_api_call(
-                    "Start indexing",
-                    lambda: api_client.start_indexing(document["document_id"], base_url),
-                )
-                if job:
-                    st.session_state["last_job_id"] = job["job_id"]
-                    st.success(f"Indexing job queued: {job['job_id']}")
-                    st.rerun()
+            if job:
+                st.session_state["last_job_id"] = job["job_id"]
+                st.success(f"Indexing job queued: {job['job_id']}")
+                st.rerun()
 
 
 def document_list(document_type: str, base_url: str) -> None:
@@ -99,10 +100,7 @@ def main() -> None:
     st.subheader("Job Status")
     last_job = st.session_state.get("last_job_id", "")
     job_id = st.text_input("Job ID", value=last_job)
-    if st.button("Refresh job", disabled=not job_id):
-        job = run_api_call("Load job", lambda: api_client.get_job(job_id, base_url))
-        if job:
-            st.json(job)
+    render_job_monitor(base_url, job_id)
 
 
 if __name__ == "__main__":

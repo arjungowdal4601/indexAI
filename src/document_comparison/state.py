@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Callable, Literal, TypedDict
 
 from .llm import ComparisonClient
 from .schemas import (
@@ -31,6 +31,7 @@ class DocumentComparisonState(TypedDict, total=False):
     resume: bool
     max_direct_regulatory_pages: int
     max_direct_estimated_tokens: int
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None
 
     run_config: ComparisonRunConfig
     state_file: ComparisonStateFile

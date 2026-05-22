@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -69,3 +69,9 @@ class RetrievalTrace(StrictModel):
 class RetrievalOutput(StrictModel):
     final_answer: FinalAnswer
     retrieval_trace: RetrievalTrace
+    routing_decision: RoutingDecision | None = None
+    selected_pages: list[int] = Field(default_factory=list)
+    estimated_context_tokens: int | None = None
+    memory_mode: Literal["direct", "compressed"] | None = None
+    compressed_evidence: list[PageEvidence] = Field(default_factory=list)
+    debug_steps: list[dict[str, Any]] = Field(default_factory=list)

@@ -15,7 +15,6 @@ STATUS_COLORS = {
     "queued": "#8a5a00",
     "failed": "#b42318",
     "not_started": "#667085",
-    "not_required": "#667085",
     "compliant": "#1b7f3a",
     "partial": "#9a6700",
     "partially_compliant": "#9a6700",
@@ -25,6 +24,13 @@ STATUS_COLORS = {
     "needs_human_review": "#6941c6",
     "not_applicable": "#667085",
 }
+
+
+def _fragment(run_every: str):
+    fragment = getattr(st, "fragment", None)
+    if fragment is None:
+        return lambda func: func
+    return fragment(run_every=run_every)
 
 
 def configure_page(title: str) -> None:
@@ -81,6 +87,15 @@ def ready_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [item for item in documents if item.get("ready_for_comparison")]
 
 
+def indexed_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in documents
+        if item.get("processing_status") == "completed"
+        and item.get("indexing_status") == "completed"
+    ]
+
+
 def document_option(document: dict[str, Any]) -> str:
     page_count = document.get("page_count")
     pages = f", {page_count} pages" if page_count else ""
@@ -103,3 +118,39 @@ def report_summary(report: dict[str, Any]) -> dict[str, Any]:
 
 def format_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
+
+
+@_fragment(run_every="2s")
+def render_job_monitor(base_url: str, job_id: str) -> None:
+    if not job_id:
+        return
+    job = run_api_call("Load job", lambda: api_client.get_job(job_id, base_url))
+    events_payload = run_api_call("Load job events", lambda: api_client.get_job_events(job_id, base_url))
+    if not job:
+        return
+
+    events = events_payload.get("events", []) if events_payload else []
+    state = "complete" if job["status"] == "completed" else "error" if job["status"] == "failed" else "running"
+    label = f"Job {job_id}: {job['status'].replace('_', ' ')}"
+    with st.status(label, state=state, expanded=job["status"] in {"queued", "running"}) as status:
+        if events:
+            last_event = events[-1]
+            st.write(last_event.get("message", ""))
+            current = last_event.get("progress_current")
+            total = last_event.get("progress_total")
+            if current is not None and total:
+                st.progress(min(1.0, float(current) / float(total)))
+            with st.expander("Event log", expanded=False):
+                for event in events:
+                    st.write(f"{event['timestamp']} - {event['step']}: {event['message']}")
+        else:
+            st.write("Waiting for job events.")
+
+        if job["status"] == "completed":
+            status.update(label=f"Job {job_id}: completed", state="complete")
+        elif job["status"] == "failed":
+            status.update(label=f"Job {job_id}: failed", state="error")
+            if job.get("error_message"):
+                st.error(job["error_message"])
+        else:
+            status.update(label=label, state="running")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from langgraph.graph import END, START, StateGraph
 
@@ -132,6 +133,7 @@ def run_document_comparison(
     resume: bool = True,
     max_direct_regulatory_pages: int = DEFAULT_MAX_DIRECT_REGULATORY_PAGES,
     max_direct_estimated_tokens: int = DEFAULT_MAX_DIRECT_ESTIMATED_TOKENS,
+    event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> ComparisonRunOutput:
     regulatory_root = Path(regulatory_root)
     sop_root = Path(sop_root)
@@ -154,6 +156,7 @@ def run_document_comparison(
             "resume": bool(resume),
             "max_direct_regulatory_pages": int(max_direct_regulatory_pages),
             "max_direct_estimated_tokens": int(max_direct_estimated_tokens),
+            "event_callback": event_callback,
             "client": comparison_client,
         }
     )

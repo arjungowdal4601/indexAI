@@ -93,7 +93,35 @@ def run_document_retrieval(
             "max_direct_estimated_tokens": int(max_direct_estimated_tokens),
         }
     )
+    debug_steps = [
+        {
+            "step": "route_query_to_topics",
+            "status": "completed",
+            "summary": "Mapped the user query to topic-index routes.",
+        },
+        {
+            "step": "read_selected_pages",
+            "status": "completed",
+            "summary": f"Read {len(result.get('page_contexts', []))} selected page Markdown file(s).",
+        },
+        {
+            "step": "estimate_context_size",
+            "status": "completed",
+            "summary": f"Selected {result.get('memory_mode')} retrieval memory mode.",
+        },
+        {
+            "step": "answer",
+            "status": "completed",
+            "summary": "Generated an answer from observable page evidence.",
+        },
+    ]
     return RetrievalOutput(
         final_answer=result["final_answer"],
         retrieval_trace=result["retrieval_trace"],
+        routing_decision=result.get("routing_decision"),
+        selected_pages=list(result.get("selected_pages", [])),
+        estimated_context_tokens=result.get("estimated_context_tokens"),
+        memory_mode=result.get("memory_mode"),
+        compressed_evidence=list(result.get("compressed_evidence", [])),
+        debug_steps=debug_steps,
     )

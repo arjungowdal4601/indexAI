@@ -112,6 +112,19 @@ def _regulatory_pages_for_item(state: DocumentComparisonState) -> list[int]:
     return pages
 
 
+def _emit_event(
+    state: DocumentComparisonState,
+    stage: str,
+    step: str,
+    message: str,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+) -> None:
+    callback = state.get("event_callback")
+    if callback is not None:
+        callback(stage, step, message, progress_current, progress_total)
+
+
 def _format_page_contexts(page_contexts) -> str:
     return "\n\n".join(
         f"--- REGULATORY PAGE {context.page} ---\n{context.markdown}"
@@ -190,6 +203,7 @@ def load_comparison_state_node(
 def load_document_manifests_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(state, "comparison", "load_manifests", "Loading regulatory and SOP manifests.")
     regulatory_manifest = load_document_manifest(state["regulatory_root"])
     sop_manifest = load_document_manifest(state["sop_root"])
     if regulatory_manifest.role != "regulatory":
@@ -223,6 +237,12 @@ def load_document_manifests_node(
 def load_regulatory_topic_index_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(
+        state,
+        "comparison",
+        "load_regulatory_index",
+        "Loading regulatory topic index for comparison routing.",
+    )
     return {
         "regulatory_topic_index": load_topic_index(
             state["regulatory_manifest"].topic_index_path
@@ -233,6 +253,14 @@ def load_regulatory_topic_index_node(
 def read_sop_page_window_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(
+        state,
+        "comparison",
+        "read_sop_page_window",
+        f"Reading SOP page {state['current_sop_page']} and continuity context.",
+        int(state["current_sop_page"]),
+        int(state.get("end_page") or state["current_sop_page"]),
+    )
     target, next_page = read_sop_page_window(
         state["sop_manifest"],
         int(state["current_sop_page"]),
@@ -252,6 +280,14 @@ def read_sop_page_window_node(
 def plan_sop_page_comparison_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(
+        state,
+        "comparison",
+        "plan_sop_page",
+        f"Planning comparison for SOP page {state['current_sop_page']}.",
+        int(state["current_sop_page"]),
+        int(state.get("end_page") or state["current_sop_page"]),
+    )
     topic_index_json = json.dumps(
         [topic.model_dump(mode="json") for topic in state["regulatory_topic_index"]],
         indent=2,
@@ -344,6 +380,12 @@ def read_regulatory_evidence_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
     pages = _regulatory_pages_for_item(state)
+    _emit_event(
+        state,
+        "comparison",
+        "read_regulatory_evidence",
+        f"Reading regulatory evidence pages: {', '.join(str(page) for page in pages)}.",
+    )
     contexts = read_regulatory_pages(state["regulatory_manifest"], pages)
     write_regulatory_pages_evidence(
         state["comparison_run_dir"],
@@ -384,6 +426,12 @@ def compress_regulatory_evidence_node(
     item = state["current_plan_item"]
     if item is None:
         return {"compressed_regulatory_evidence": []}
+    _emit_event(
+        state,
+        "comparison",
+        "compress_regulatory_evidence",
+        f"Compressing regulatory evidence for SOP page {state['current_sop_page']} item {state['current_item_number']}.",
+    )
     evidence = [
         state["client"].compress_regulatory_evidence(item, context)
         for context in state["regulatory_page_contexts"]
@@ -403,6 +451,12 @@ def execute_gap_analysis_node(
     item = state["current_plan_item"]
     if item is None:
         raise RuntimeError("No current comparison plan item is available.")
+    _emit_event(
+        state,
+        "comparison",
+        "analyze_gap_item",
+        f"Analyzing SOP page {state['current_sop_page']} item {state['current_item_number']}.",
+    )
     if state["comparison_memory_mode"] == "compressed":
         regulatory_evidence = _format_compressed_evidence(
             state.get("compressed_regulatory_evidence", [])
@@ -457,6 +511,14 @@ def aggregate_sop_page_result_node(
 def write_page_result_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(
+        state,
+        "comparison",
+        "write_page_report",
+        f"Writing page report for SOP page {state['current_sop_page']}.",
+        int(state["current_sop_page"]),
+        int(state["end_page"]),
+    )
     path = write_page_result(state["comparison_run_dir"], state["page_result"])
     completed_page_paths = state.get("completed_page_result_paths", []) + [path]
     next_page = state["current_sop_page"] + 1
@@ -501,6 +563,12 @@ def write_page_result_node(
 def aggregate_final_gap_report_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    _emit_event(
+        state,
+        "comparison",
+        "aggregate_final_report",
+        "Aggregating final gap report.",
+    )
     page_results = read_page_results(state["comparison_run_dir"])
     report = build_gap_report(
         comparison_run_id=state["comparison_run_id"],

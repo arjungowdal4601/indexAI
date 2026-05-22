@@ -66,7 +66,7 @@ def upload_document(document_type: str, original_filename: str, content: bytes) 
         "asset_root": asset_root,
         "uploaded_at": registry.utc_now(),
         "processing_status": "not_started",
-        "indexing_status": "not_started" if document_type == "regulatory" else "not_required",
+        "indexing_status": "not_started",
         "ready_for_comparison": "false",
         "page_count": "",
         "error_message": "",

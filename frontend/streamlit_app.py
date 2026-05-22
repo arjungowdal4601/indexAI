@@ -38,9 +38,10 @@ def main() -> None:
     st.markdown(
         """
 1. Upload regulatory and SOP PDFs in **Upload and Prepare**.
-2. Process both documents, then index the regulatory document.
+2. Process and index both documents.
 3. Run a comparison in **Compare Documents**.
 4. Review SOP page images and gap findings in **Review Report**.
+5. Ask indexed-document questions in **Document Co-pilot**.
 """
     )
 

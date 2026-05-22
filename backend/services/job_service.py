@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from backend.schemas import JobResponse
-from backend.services import registry
+from backend.services import job_event_service, registry
 
 
 def _job_response(row: dict[str, str]) -> JobResponse:
@@ -40,6 +40,12 @@ def create_job(
         "log_path": log_path,
     }
     registry.upsert_job(row)
+    job_event_service.append_event(
+        job_id,
+        stage=job_type,
+        step="queued",
+        message=f"Queued {job_type} job.",
+    )
     return _job_response(row)
 
 
@@ -58,12 +64,36 @@ def update_job(job_id: str, **updates: object) -> None:
 
 
 def mark_job_running(job_id: str) -> None:
+    row = registry.get_job(job_id)
+    job_type = row["job_type"] if row else "job"
     update_job(job_id, status="running", started_at=registry.utc_now(), error_message="")
+    job_event_service.append_event(
+        job_id,
+        stage=job_type,
+        step="running",
+        message=f"Started {job_type} job.",
+    )
 
 
 def mark_job_completed(job_id: str) -> None:
+    row = registry.get_job(job_id)
+    job_type = row["job_type"] if row else "job"
     update_job(job_id, status="completed", finished_at=registry.utc_now(), error_message="")
+    job_event_service.append_event(
+        job_id,
+        stage=job_type,
+        step="completed",
+        message=f"Completed {job_type} job.",
+    )
 
 
 def mark_job_failed(job_id: str, error: Exception) -> None:
+    row = registry.get_job(job_id)
+    job_type = row["job_type"] if row else "job"
     update_job(job_id, status="failed", finished_at=registry.utc_now(), error_message=str(error))
+    job_event_service.append_event(
+        job_id,
+        stage=job_type,
+        step="failed",
+        message=str(error),
+    )

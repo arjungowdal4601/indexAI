@@ -6,8 +6,14 @@ from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 
-from backend.schemas import DocumentListResponse, DocumentResponse, JobResponse
-from backend.services import document_service, indexing_service, processing_service
+from backend.schemas import (
+    CopilotQueryRequest,
+    CopilotQueryResponse,
+    DocumentListResponse,
+    DocumentResponse,
+    JobResponse,
+)
+from backend.services import copilot_service, document_service, indexing_service, processing_service
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -46,3 +52,11 @@ def index_document(
     background_tasks: BackgroundTasks,
 ) -> JobResponse:
     return indexing_service.start_indexing_job(document_id, background_tasks)
+
+
+@router.post("/{document_id}/copilot/query", response_model=CopilotQueryResponse)
+def query_document_copilot(
+    document_id: str,
+    request: CopilotQueryRequest,
+) -> CopilotQueryResponse:
+    return copilot_service.query_document_copilot(document_id, request)

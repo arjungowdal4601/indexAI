@@ -11,12 +11,16 @@ from backend.schemas import (
     ComparisonStatusResponse,
     CreateComparisonResponse,
 )
-from backend.services import document_service, job_service, registry
+from backend.services import document_service, job_event_service, job_service, registry
 from document_comparison.graph import run_document_comparison
 
 
 def _ready(document: dict[str, str]) -> bool:
-    return document.get("ready_for_comparison", "").lower() == "true"
+    return (
+        document.get("processing_status") == "completed"
+        and document.get("indexing_status") == "completed"
+        and document.get("ready_for_comparison", "").lower() == "true"
+    )
 
 
 def create_comparison(
@@ -72,6 +76,12 @@ def create_comparison(
         comparison_id=comparison_id,
         log_path=str(run_dir / "logs" / "run_log.csv"),
     )
+    job_event_service.append_event(
+        job.job_id,
+        stage="comparison",
+        step="queued",
+        message=f"Queued comparison {comparison_id}.",
+    )
     background_tasks.add_task(compare_documents_job, job.job_id, comparison_id)
     return CreateComparisonResponse(comparison_id=comparison_id, job_id=job.job_id, status="queued")
 
@@ -86,11 +96,29 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
         regulatory = document_service.get_document_or_404(comparison["regulatory_document_id"])
         sop = document_service.get_document_or_404(comparison["sop_document_id"])
         run_dir = registry.comparison_root(comparison_id)
+        job_event_service.append_event(
+            job_id,
+            stage="comparison",
+            step="load_manifests",
+            message="Loading comparison manifests.",
+        )
+        # SOP documents are indexed for lifecycle uniformity and co-pilot support.
+        # The comparison planner intentionally uses only the regulatory topic index.
         output = run_document_comparison(
             regulatory_root=Path(regulatory["asset_root"]),
             sop_root=Path(sop["asset_root"]),
             comparison_run_dir=run_dir,
             comparison_run_id=comparison_id,
+            event_callback=lambda stage, step, message, progress_current=None, progress_total=None: (
+                job_event_service.append_event(
+                    job_id,
+                    stage=stage,
+                    step=step,
+                    message=message,
+                    progress_current=progress_current,
+                    progress_total=progress_total,
+                )
+            ),
         )
         registry.upsert_comparison(
             {
@@ -101,6 +129,12 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
                 "report_md_path": str(output.markdown_report_path),
                 "error_message": "",
             }
+        )
+        job_event_service.append_event(
+            job_id,
+            stage="comparison",
+            step="completed",
+            message=f"Comparison report generated for {comparison_id}.",
         )
         job_service.mark_job_completed(job_id)
     except Exception as exc:
@@ -114,6 +148,12 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
                     "error_message": str(exc),
                 }
             )
+        job_event_service.append_event(
+            job_id,
+            stage="comparison",
+            step="failed",
+            message=str(exc),
+        )
         job_service.mark_job_failed(job_id, exc)
 
 

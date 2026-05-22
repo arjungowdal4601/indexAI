@@ -66,6 +66,7 @@ def ensure_storage(root: Path | None = None) -> Path:
     (root / "documents" / "regulatory").mkdir(parents=True, exist_ok=True)
     (root / "documents" / "sop").mkdir(parents=True, exist_ok=True)
     (root / "comparisons").mkdir(parents=True, exist_ok=True)
+    (root / "jobs").mkdir(parents=True, exist_ok=True)
     (root / "temp").mkdir(parents=True, exist_ok=True)
     _ensure_csv(document_registry_path(root), DOCUMENT_FIELDS)
     _ensure_csv(job_registry_path(root), JOB_FIELDS)

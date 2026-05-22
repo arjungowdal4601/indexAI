@@ -1,6 +1,6 @@
 # Document Processing Pipeline
 
-This project has three separate runnable pipelines.
+This project has separate runnable pipelines plus a backend framework wrapper.
 
 The document processing pipeline runs:
 
@@ -14,8 +14,8 @@ No LLM is used during Docling conversion or table-continuity detection. Enrichme
 Retrieval also uses LangGraph, LangChain chat prompt templates, and schema-based structured output.
 
 The backend MVP wraps these pipelines with FastAPI, CSV registries, and canonical
-`storage/` folders for upload, processing, regulatory indexing, SOP-vs-regulatory
-comparison, report access, and page-image serving.
+`storage/` folders for upload, processing, document indexing, SOP-vs-regulatory
+comparison, document co-pilot Q&A, report access, and page-image serving.
 
 ## Structure
 
@@ -209,6 +209,17 @@ Or run both backend and frontend together from the `compute` Conda environment:
 The script starts FastAPI on `http://127.0.0.1:8000` and Streamlit on
 `http://127.0.0.1:8501`, then stops both services when you press `Ctrl+C`.
 
+In the framework UI, both regulatory and SOP documents follow the same lifecycle:
+
+```text
+upload -> process -> index -> ready
+```
+
+SOP indexing writes a real `indexing_output/topic_index.json` for uniform document
+management and Document Co-pilot Q&A. SOP-vs-regulatory comparison still uses only
+the regulatory document's topic index for gap-analysis routing; SOP pages are read
+directly as page evidence.
+
 The backend uses `storage/` by default. Override it for tests or alternate
 workspaces with:
 
@@ -224,6 +235,8 @@ GET /documents
 POST /documents/{document_id}/process
 POST /documents/{document_id}/index
 GET /jobs/{job_id}
+GET /jobs/{job_id}/events
+POST /documents/{document_id}/copilot/query
 POST /comparisons
 GET /comparisons/{comparison_id}
 GET /comparisons/{comparison_id}/report

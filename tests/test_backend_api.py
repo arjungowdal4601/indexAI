@@ -10,6 +10,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
+from document_retrieval.schemas import FinalAnswer, RetrievalOutput, RetrievalTrace
 
 
 def read_csv_rows(path: Path) -> list[dict]:
@@ -94,6 +95,33 @@ def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, compar
     )
 
 
+def fake_retrieve_document(**_kwargs):
+    return RetrievalOutput(
+        final_answer=FinalAnswer(
+            answer="Co-pilot answer [p. 1].",
+            pages_used=[1],
+            missing_information=[],
+        ),
+        retrieval_trace=RetrievalTrace(
+            matched_topics=["Prepared evidence controls"],
+            pages_read=[1],
+            files_read=["page_0001.md"],
+            memory_mode="direct",
+            selection_reason="Selected the matching prepared evidence topic.",
+        ),
+        selected_pages=[1],
+        estimated_context_tokens=12,
+        memory_mode="direct",
+        debug_steps=[
+            {
+                "step": "answer",
+                "status": "completed",
+                "summary": "Generated a co-pilot answer.",
+            }
+        ],
+    )
+
+
 class BackendApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -156,7 +184,7 @@ class BackendApiTests(unittest.TestCase):
         rows = read_csv_rows(self.storage_root / "registries" / "document_registry.csv")
         self.assertEqual([row["document_id"] for row in rows], ["reg_000001", "sop_000001"])
         self.assertEqual(rows[0]["indexing_status"], "not_started")
-        self.assertEqual(rows[1]["indexing_status"], "not_required")
+        self.assertEqual(rows[1]["indexing_status"], "not_started")
 
     def test_upload_rejects_non_pdf(self):
         response = self.client.post(
@@ -167,7 +195,7 @@ class BackendApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
-    def test_process_job_updates_sop_readiness_and_writes_manifest(self):
+    def test_process_job_keeps_sop_not_ready_and_writes_manifest(self):
         sop = self.upload_pdf("sop")
 
         job = self.process_document(sop["document_id"])
@@ -176,13 +204,14 @@ class BackendApiTests(unittest.TestCase):
         job_status = self.client.get(f"/jobs/{job['job_id']}").json()
         self.assertEqual(job_status["status"], "completed")
         document = self.client.get("/documents", params={"document_type": "sop"}).json()["documents"][0]
-        self.assertTrue(document["ready_for_comparison"])
+        self.assertFalse(document["ready_for_comparison"])
+        self.assertEqual(document["indexing_status"], "not_started")
         manifest_path = self.storage_root / "documents" / "sop" / sop["document_id"] / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["document_type"], "sop")
         self.assertEqual(manifest["total_pages"], 1)
 
-    def test_indexing_rejects_sop_and_unprocessed_regulatory_document(self):
+    def test_indexing_rejects_unprocessed_documents(self):
         regulatory = self.upload_pdf("regulatory")
         sop = self.upload_pdf("sop")
 
@@ -216,12 +245,31 @@ class BackendApiTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["topic_index_path"], "indexing_output/topic_index.json")
 
+    def test_sop_indexing_writes_topic_index_path_and_readiness(self):
+        sop = self.upload_pdf("sop")
+        self.process_document(sop["document_id"])
+
+        job = self.index_document(sop["document_id"])
+
+        self.assertEqual(job["job_type"], "index_document")
+        job_status = self.client.get(f"/jobs/{job['job_id']}").json()
+        self.assertEqual(job_status["status"], "completed")
+        document = self.client.get(
+            "/documents",
+            params={"document_type": "sop"},
+        ).json()["documents"][0]
+        self.assertTrue(document["ready_for_comparison"])
+        manifest_path = self.storage_root / "documents" / "sop" / sop["document_id"] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["topic_index_path"], "indexing_output/topic_index.json")
+
     def test_comparison_creation_writes_request_reports_and_registry(self):
         regulatory = self.upload_pdf("regulatory")
         sop = self.upload_pdf("sop")
         self.process_document(regulatory["document_id"])
         self.process_document(sop["document_id"])
         self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
 
         with patch(
             "backend.services.comparison_service.run_document_comparison",
@@ -253,6 +301,56 @@ class BackendApiTests(unittest.TestCase):
             page["sop_page_image_url"],
             f"/assets/documents/{sop['document_id']}/page-image/1",
         )
+
+    def test_comparison_requires_both_documents_processed_and_indexed(self):
+        regulatory = self.upload_pdf("regulatory")
+        sop = self.upload_pdf("sop")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+
+        response = self.client.post(
+            "/comparisons",
+            json={
+                "regulatory_document_id": regulatory["document_id"],
+                "sop_document_id": sop["document_id"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_job_events_are_written_and_returned(self):
+        sop = self.upload_pdf("sop")
+        job = self.process_document(sop["document_id"])
+
+        response = self.client.get(f"/jobs/{job['job_id']}/events")
+
+        self.assertEqual(response.status_code, 200)
+        events = response.json()["events"]
+        self.assertTrue(events)
+        self.assertTrue(any(event["step"] == "completed" for event in events))
+
+    def test_copilot_query_uses_selected_document_topic_index(self):
+        sop = self.upload_pdf("sop")
+        self.process_document(sop["document_id"])
+        self.index_document(sop["document_id"])
+
+        with patch(
+            "backend.services.copilot_service.run_document_retrieval",
+            side_effect=fake_retrieve_document,
+        ) as run_retrieval:
+            response = self.client.post(
+                f"/documents/{sop['document_id']}/copilot/query",
+                json={"query": "What evidence is prepared?"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["document_id"], sop["document_id"])
+        self.assertEqual(payload["answer"]["answer"], "Co-pilot answer [p. 1].")
+        kwargs = run_retrieval.call_args.kwargs
+        self.assertTrue(str(kwargs["topic_index_path"]).endswith("indexing_output\\topic_index.json"))
+        self.assertTrue(str(kwargs["pages_folder_path"]).endswith("enriched_doc\\pages_md"))
 
     def test_asset_endpoint_returns_page_image_or_404(self):
         sop = self.upload_pdf("sop")
