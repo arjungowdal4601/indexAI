@@ -168,6 +168,68 @@ class FrontendApiClientTests(unittest.TestCase):
             },
         )
 
+    def test_get_active_comparison_for_pair_calls_backend_endpoint(self):
+        from frontend import api_client
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            return FakeHttpResponse(
+                {
+                    "regulatory_document_id": "reg_000001",
+                    "sop_document_id": "sop_000001",
+                    "active_comparison_id": "cmp_000001",
+                    "latest_comparison_id": "cmp_000001",
+                    "status": "running",
+                    "message": "Active comparison is running.",
+                }
+            )
+
+        with patch.dict(
+            os.environ,
+            {"DOC_COMPARING_API_BASE_URL": "http://api.local"},
+        ), patch("frontend.api_client.urlopen", side_effect=fake_urlopen):
+            result = api_client.get_active_comparison_for_pair("reg_000001", "sop_000001")
+
+        self.assertEqual(result["active_comparison_id"], "cmp_000001")
+        self.assertEqual(
+            captured["url"],
+            "http://api.local/comparisons/by-pair/active?"
+            "regulatory_document_id=reg_000001&sop_document_id=sop_000001",
+        )
+        self.assertEqual(captured["method"], "GET")
+
+    def test_get_comparison_progress_calls_progress_endpoint(self):
+        from frontend import api_client
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            return FakeHttpResponse(
+                {
+                    "comparison_id": "cmp_000001",
+                    "status": "running",
+                    "progress_current": 3,
+                    "progress_total": 15,
+                    "progress_percent": 0.2,
+                    "events": [],
+                }
+            )
+
+        with patch.dict(
+            os.environ,
+            {"DOC_COMPARING_API_BASE_URL": "http://api.local"},
+        ), patch("frontend.api_client.urlopen", side_effect=fake_urlopen):
+            result = api_client.get_comparison_progress("cmp_000001")
+
+        self.assertEqual(result["progress_current"], 3)
+        self.assertEqual(captured["url"], "http://api.local/comparisons/cmp_000001/progress")
+        self.assertEqual(captured["method"], "GET")
+
 
 class FrontendContractTests(unittest.TestCase):
     def test_streamlit_frontend_files_exist(self):
@@ -217,7 +279,7 @@ class FrontendContractTests(unittest.TestCase):
         source = Path("frontend/pages/2_Compare_Documents.py").read_text(encoding="utf-8")
 
         self.assertIn("render_comparison_progress", source)
-        self.assertIn("get_comparison", source)
+        self.assertIn("get_active_comparison_for_pair", source)
         self.assertNotIn("render_job_monitor", source)
         self.assertNotIn("last_job_id", source)
         self.assertNotIn("Job ID", source)
@@ -232,6 +294,8 @@ class FrontendContractTests(unittest.TestCase):
 
         self.assertIn("st.status", function_source)
         self.assertIn("Comparison running", function_source)
+        self.assertIn("get_comparison_progress", function_source)
+        self.assertIn("Show comparison steps", function_source)
         self.assertNotIn("job_id", function_source)
 
     def test_latest_progress_splits_processing_and_indexing_events(self):

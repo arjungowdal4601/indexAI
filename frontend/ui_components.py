@@ -166,6 +166,13 @@ def colored_progress(label: str, current: int, total: int, color: str) -> None:
     )
 
 
+def _safe_progress_value(value: object) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 @_fragment(run_every="2s")
 def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str | None) -> None:
     if not job_id and not document.get("ready_for_comparison"):
@@ -216,16 +223,16 @@ def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str
 def render_comparison_progress(base_url: str, comparison_id: str | None) -> None:
     if not comparison_id:
         return
-    comparison = run_api_call(
-        "Load comparison",
-        lambda: api_client.get_comparison(comparison_id, base_url),
+    progress = run_api_call(
+        "Load comparison progress",
+        lambda: api_client.get_comparison_progress(comparison_id, base_url),
     )
-    if not comparison:
+    if not progress:
         return
 
-    status = comparison.get("status", "queued")
+    status = progress.get("status", "queued")
     st.subheader("Comparison")
-    st.markdown(f"Comparison ID: `{comparison['comparison_id']}`")
+    st.caption(f"Comparison ID: {comparison_id}")
     state = "complete" if status == "completed" else "error" if status == "failed" else "running"
     label = (
         "Comparison complete"
@@ -237,24 +244,38 @@ def render_comparison_progress(base_url: str, comparison_id: str | None) -> None
     with st.status(label, state=state, expanded=status in {"queued", "running"}) as status_box:
         st.markdown(f"Status: {status_badge(status)}", unsafe_allow_html=True)
 
-        message = comparison.get("progress_message") or "Waiting for comparison progress."
-        st.write(f"Progress: {message}")
-
-        current = comparison.get("progress_current")
-        total = comparison.get("progress_total")
-        if current is not None and total:
-            st.progress(min(1.0, float(current) / float(total)))
-        elif status in {"queued", "running"}:
-            st.progress(0.0)
-
-        if status == "completed":
+        message = progress.get("message") or "Comparison status unavailable."
+        if status in {"queued", "running"}:
+            st.info(message)
+            progress_percent = progress.get("progress_percent")
+            current = progress.get("progress_current")
+            total = progress.get("progress_total")
+            if progress_percent is not None and current is not None and total:
+                st.progress(
+                    _safe_progress_value(progress_percent),
+                    text=f"{current} / {total} SOP pages",
+                )
+            else:
+                st.progress(0.05, text="Waiting for SOP-page progress...")
+        elif status == "completed":
             status_box.update(label="Comparison complete", state="complete", expanded=False)
             st.success("Comparison complete. Open Review Report to inspect findings.")
+            st.progress(1.0, text="Completed")
         elif status == "failed":
             status_box.update(label="Comparison failed", state="error", expanded=True)
-            st.error(comparison.get("error_message") or "Comparison failed.")
+            st.error(progress.get("error_message") or message or "Comparison failed.")
         else:
-            status_box.update(label="Comparison running", state="running", expanded=True)
+            st.warning(f"Comparison status: {status or 'unknown'}")
+
+        with st.expander("Show comparison steps", expanded=False):
+            for event in progress.get("events", [])[-25:]:
+                event_message = event.get("message", "")
+                current = event.get("progress_current")
+                total = event.get("progress_total")
+                if current is not None and total is not None:
+                    st.write(f"{event_message} ({current}/{total})")
+                else:
+                    st.write(event_message)
 
 
 @_fragment(run_every="2s")

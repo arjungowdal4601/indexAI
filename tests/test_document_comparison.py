@@ -489,6 +489,53 @@ class DocumentComparisonGraphTests(unittest.TestCase):
             self.assertEqual(state["last_completed_sop_page"], 2)
             self.assertEqual(state["status"], "completed")
 
+    def test_comparison_progress_events_use_page_window_index(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            reg_root = make_document_root(
+                base,
+                "regulatory",
+                "reg_v1",
+                total_pages=1,
+                topic_index=regulatory_topics(),
+            )
+            sop_root = make_document_root(base, "sop", "sop_v1", total_pages=3)
+            run_dir = base / "comparison_runs" / "run_progress"
+            events = []
+
+            def collect_event(stage, step, message, progress_current=None, progress_total=None):
+                events.append(
+                    {
+                        "stage": stage,
+                        "step": step,
+                        "message": message,
+                        "progress_current": progress_current,
+                        "progress_total": progress_total,
+                    }
+                )
+
+            run_document_comparison(
+                regulatory_root=reg_root,
+                sop_root=sop_root,
+                comparison_run_dir=run_dir,
+                comparison_run_id="run_progress",
+                client=FakeComparisonClient(),
+                start_page=2,
+                end_page=3,
+                event_callback=collect_event,
+            )
+
+            plan_events = [event for event in events if event["step"] == "plan_sop_page"]
+            write_events = [event for event in events if event["step"] == "write_page_report"]
+            self.assertEqual(
+                [(event["progress_current"], event["progress_total"]) for event in plan_events],
+                [(1, 2), (2, 2)],
+            )
+            self.assertEqual(
+                [(event["progress_current"], event["progress_total"]) for event in write_events],
+                [(1, 2), (2, 2)],
+            )
+
     def test_graph_exports_mermaid(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = Path(temp_dir) / "comparison_graph.mmd"

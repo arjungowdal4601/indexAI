@@ -129,6 +129,26 @@ def get_comparison(comparison_id: str, base_url: str | None = None) -> dict[str,
     return _request_json("GET", f"/comparisons/{comparison_id}", base_url=base_url)
 
 
+def get_active_comparison_for_pair(
+    regulatory_document_id: str,
+    sop_document_id: str,
+    base_url: str | None = None,
+) -> dict[str, Any]:
+    return _request_json(
+        "GET",
+        "/comparisons/by-pair/active",
+        query={
+            "regulatory_document_id": regulatory_document_id,
+            "sop_document_id": sop_document_id,
+        },
+        base_url=base_url,
+    )
+
+
+def get_comparison_progress(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
+    return _request_json("GET", f"/comparisons/{comparison_id}/progress", base_url=base_url)
+
+
 def get_comparison_report(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", f"/comparisons/{comparison_id}/report", base_url=base_url)
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks
 
 from backend.schemas import (
+    ActiveComparisonResponse,
+    ComparisonProgressResponse,
     ComparisonStatusResponse,
     CreateComparisonRequest,
     CreateComparisonResponse,
@@ -26,9 +28,25 @@ def create_comparison(
     )
 
 
+@router.get("/by-pair/active", response_model=ActiveComparisonResponse)
+def get_active_comparison(
+    regulatory_document_id: str,
+    sop_document_id: str,
+) -> ActiveComparisonResponse:
+    return comparison_service.get_active_comparison_for_pair(
+        regulatory_document_id=regulatory_document_id,
+        sop_document_id=sop_document_id,
+    )
+
+
 @router.get("/{comparison_id}", response_model=ComparisonStatusResponse)
 def get_comparison(comparison_id: str) -> ComparisonStatusResponse:
     return comparison_service.get_comparison_status(comparison_id)
+
+
+@router.get("/{comparison_id}/progress", response_model=ComparisonProgressResponse)
+def get_comparison_progress(comparison_id: str) -> ComparisonProgressResponse:
+    return comparison_service.get_comparison_progress(comparison_id)
 
 
 @router.get("/{comparison_id}/report")

@@ -48,15 +48,27 @@ def main() -> None:
             placeholder="Select indexed SOP document",
         )
 
-    disabled = not selected_reg or not selected_sop
-    active_comparison_id = st.session_state.get("active_comparison_id", "")
-    if active_comparison_id:
-        comparison = run_api_call(
-            "Load active comparison",
-            lambda: api_client.get_comparison(active_comparison_id, base_url),
+    pair_state = None
+    if selected_reg and selected_sop:
+        pair_state = run_api_call(
+            "Load comparison state for selected pair",
+            lambda: api_client.get_active_comparison_for_pair(
+                selected_reg["document_id"],
+                selected_sop["document_id"],
+                base_url,
+            ),
         )
-        if comparison and comparison.get("status") in {"queued", "running"}:
-            disabled = True
+    active_comparison_id = pair_state.get("active_comparison_id") if pair_state else None
+    latest_comparison_id = pair_state.get("latest_comparison_id") if pair_state else None
+    comparison_to_show = (
+        active_comparison_id
+        or latest_comparison_id
+        or st.session_state.get("active_comparison_id")
+    )
+
+    disabled = not selected_reg or not selected_sop or bool(active_comparison_id)
+    if active_comparison_id:
+        st.info(f"A comparison is already running for this document pair: {active_comparison_id}")
     if st.button("Run Comparison", type="primary", disabled=disabled):
         result = run_api_call(
             "Create comparison",
@@ -72,7 +84,9 @@ def main() -> None:
             st.rerun()
 
     st.divider()
-    render_comparison_progress(base_url, st.session_state.get("active_comparison_id"))
+    if latest_comparison_id and not active_comparison_id:
+        st.caption(f"Latest comparison: {latest_comparison_id}")
+    render_comparison_progress(base_url, comparison_to_show)
 
 
 if __name__ == "__main__":

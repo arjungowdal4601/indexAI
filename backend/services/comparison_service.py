@@ -8,11 +8,17 @@ from pathlib import Path
 from fastapi import BackgroundTasks, HTTPException
 
 from backend.schemas import (
+    ActiveComparisonResponse,
+    ComparisonProgressEvent,
+    ComparisonProgressResponse,
     ComparisonStatusResponse,
     CreateComparisonResponse,
 )
 from backend.services import document_service, job_event_service, job_service, registry
 from document_comparison.graph import run_document_comparison
+
+ACTIVE_COMPARISON_STATUSES = {"queued", "running"}
+TERMINAL_COMPARISON_STATUSES = {"completed", "failed"}
 
 
 def _ready(document: dict[str, str]) -> bool:
@@ -38,6 +44,15 @@ def create_comparison(
         raise HTTPException(status_code=400, detail="Regulatory document is not ready for comparison")
     if not _ready(sop):
         raise HTTPException(status_code=400, detail="SOP document is not ready for comparison")
+
+    existing_active = active_comparison_for_pair(regulatory_document_id, sop_document_id)
+    if existing_active is not None:
+        latest_job = _latest_comparison_job(existing_active["comparison_id"])
+        return CreateComparisonResponse(
+            comparison_id=existing_active["comparison_id"],
+            job_id=latest_job["job_id"] if latest_job else "",
+            status=existing_active["status"],
+        )
 
     comparison_id = registry.next_comparison_id()
     run_dir = registry.comparison_root(comparison_id)
@@ -176,76 +191,152 @@ def _latest_comparison_job(comparison_id: str) -> dict[str, str] | None:
     return jobs[-1]
 
 
-def _comparison_progress_message(
-    step: str,
-    current: int | None,
-    total: int | None,
-    status: str,
-    fallback: str,
-) -> str:
-    if status == "completed":
-        return "Comparison complete."
-    if current is None or total is None:
-        return fallback
-    if step == "read_sop_page_window":
-        return f"Reading SOP page {current} of {total}."
-    if step == "plan_sop_page":
-        return f"Planning SOP page {current} of {total}."
-    if step == "read_regulatory_evidence":
-        return f"Reading regulatory evidence for SOP page {current} of {total}."
-    if step == "analyze_gap_item":
-        return f"Analyzing SOP page {current} of {total}."
-    if step == "write_page_report":
-        return f"Completed SOP page {current} of {total}."
-    return fallback
+def _comparison_sort_key(row: dict[str, str]) -> tuple[int, str]:
+    comparison_id = row.get("comparison_id", "")
+    try:
+        numeric = int(comparison_id.split("_")[-1])
+    except (IndexError, ValueError):
+        numeric = -1
+    return (numeric, row.get("created_at", ""))
 
 
-def _comparison_progress(comparison_id: str, status: str) -> dict[str, int | str | None]:
+def comparisons_for_pair(
+    regulatory_document_id: str,
+    sop_document_id: str,
+) -> list[dict[str, str]]:
+    rows = [
+        row
+        for row in registry.read_comparisons()
+        if row.get("regulatory_document_id") == regulatory_document_id
+        and row.get("sop_document_id") == sop_document_id
+    ]
+    return sorted(rows, key=_comparison_sort_key)
+
+
+def active_comparison_for_pair(
+    regulatory_document_id: str,
+    sop_document_id: str,
+) -> dict[str, str] | None:
+    active = [
+        row
+        for row in comparisons_for_pair(regulatory_document_id, sop_document_id)
+        if row.get("status") in ACTIVE_COMPARISON_STATUSES
+    ]
+    return active[-1] if active else None
+
+
+def latest_comparison_for_pair(
+    regulatory_document_id: str,
+    sop_document_id: str,
+) -> dict[str, str] | None:
+    rows = comparisons_for_pair(regulatory_document_id, sop_document_id)
+    return rows[-1] if rows else None
+
+
+def get_active_comparison_for_pair(
+    regulatory_document_id: str,
+    sop_document_id: str,
+) -> ActiveComparisonResponse:
+    active = active_comparison_for_pair(regulatory_document_id, sop_document_id)
+    latest = latest_comparison_for_pair(regulatory_document_id, sop_document_id)
+
+    if active is not None:
+        return ActiveComparisonResponse(
+            regulatory_document_id=regulatory_document_id,
+            sop_document_id=sop_document_id,
+            active_comparison_id=active["comparison_id"],
+            latest_comparison_id=latest["comparison_id"] if latest else active["comparison_id"],
+            status=active["status"],
+            message="Active comparison is running.",
+        )
+    if latest is not None:
+        return ActiveComparisonResponse(
+            regulatory_document_id=regulatory_document_id,
+            sop_document_id=sop_document_id,
+            active_comparison_id=None,
+            latest_comparison_id=latest["comparison_id"],
+            status=latest["status"],
+            message="No active comparison. Latest comparison returned.",
+        )
+    return ActiveComparisonResponse(
+        regulatory_document_id=regulatory_document_id,
+        sop_document_id=sop_document_id,
+        active_comparison_id=None,
+        latest_comparison_id=None,
+        status=None,
+        message="No comparison has been run for this document pair.",
+    )
+
+
+def _comparison_events_for_job(comparison_id: str) -> list:
     job = _latest_comparison_job(comparison_id)
     if job is None:
-        return {}
-
-    events = [
+        return []
+    return [
         event
         for event in job_event_service.read_events(job["job_id"]).events
         if event.stage == "comparison"
     ]
-    if not events:
-        return {}
 
-    latest_event = events[-1]
+
+def get_comparison_progress(comparison_id: str) -> ComparisonProgressResponse:
+    row = get_comparison_row_or_404(comparison_id)
+    events = _comparison_events_for_job(comparison_id)
+    latest_event = events[-1] if events else None
     page_events = [
         event
         for event in events
         if event.progress_current is not None and event.progress_total is not None
     ]
     latest_page_event = page_events[-1] if page_events else None
-    current = latest_event.progress_current
-    total = latest_event.progress_total
-    if current is None and latest_page_event is not None:
-        current = latest_page_event.progress_current
-        total = latest_page_event.progress_total
 
-    message = _comparison_progress_message(
-        latest_event.step,
-        current,
-        total,
-        status,
-        latest_event.message,
+    current = latest_page_event.progress_current if latest_page_event is not None else None
+    total = latest_page_event.progress_total if latest_page_event is not None else None
+    message = latest_event.message if latest_event is not None else None
+    current_stage = latest_event.stage if latest_event is not None else None
+    current_step = latest_event.step if latest_event is not None else None
+
+    if row["status"] == "completed":
+        message = "Comparison complete."
+        if total is not None:
+            current = total
+
+    progress_percent = None
+    if current is not None and total:
+        progress_percent = max(0.0, min(1.0, float(current) / float(total)))
+
+    return ComparisonProgressResponse(
+        comparison_id=row["comparison_id"],
+        regulatory_document_id=row["regulatory_document_id"],
+        sop_document_id=row["sop_document_id"],
+        status=row["status"],
+        current_stage=current_stage,
+        current_step=current_step,
+        message=message,
+        progress_current=current,
+        progress_total=total,
+        progress_percent=progress_percent,
+        report_ready=bool(row.get("report_json_path")) and row["status"] == "completed",
+        report_json_path=row.get("report_json_path") or None,
+        report_md_path=row.get("report_md_path") or None,
+        error_message=row.get("error_message") or None,
+        events=[
+            ComparisonProgressEvent(
+                timestamp=event.timestamp,
+                stage=event.stage,
+                step=event.step,
+                message=event.message,
+                progress_current=event.progress_current,
+                progress_total=event.progress_total,
+            )
+            for event in events
+        ],
     )
-    return {
-        "progress_message": message,
-        "progress_current": current,
-        "progress_total": total,
-    }
 
 
 def get_comparison_status(comparison_id: str) -> ComparisonStatusResponse:
     row = get_comparison_row_or_404(comparison_id)
-    progress = _comparison_progress(comparison_id, row["status"])
-    progress_message = progress.get("progress_message")
-    progress_current = progress.get("progress_current")
-    progress_total = progress.get("progress_total")
+    progress = get_comparison_progress(comparison_id)
     return ComparisonStatusResponse(
         comparison_id=row["comparison_id"],
         regulatory_document_id=row["regulatory_document_id"],
@@ -254,7 +345,7 @@ def get_comparison_status(comparison_id: str) -> ComparisonStatusResponse:
         report_json_path=row.get("report_json_path") or None,
         report_md_path=row.get("report_md_path") or None,
         error_message=row.get("error_message") or None,
-        progress_message=str(progress_message) if progress_message is not None else None,
-        progress_current=int(progress_current) if progress_current is not None else None,
-        progress_total=int(progress_total) if progress_total is not None else None,
+        progress_message=progress.message,
+        progress_current=progress.progress_current,
+        progress_total=progress.progress_total,
     )

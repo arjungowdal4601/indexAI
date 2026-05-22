@@ -125,6 +125,15 @@ def _emit_event(
         callback(stage, step, message, progress_current, progress_total)
 
 
+def _sop_page_progress(state: DocumentComparisonState) -> tuple[int, int]:
+    start_page = int(state.get("start_page") or 1)
+    current_page = int(state["current_sop_page"])
+    end_page = int(state.get("end_page") or current_page)
+    total = max(1, end_page - start_page + 1)
+    current = max(1, min(total, current_page - start_page + 1))
+    return current, total
+
+
 def _format_page_contexts(page_contexts) -> str:
     return "\n\n".join(
         f"--- REGULATORY PAGE {context.page} ---\n{context.markdown}"
@@ -253,13 +262,14 @@ def load_regulatory_topic_index_node(
 def read_sop_page_window_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    progress_current, progress_total = _sop_page_progress(state)
     _emit_event(
         state,
         "comparison",
         "read_sop_page_window",
-        f"Reading SOP page {state['current_sop_page']} and continuity context.",
-        int(state["current_sop_page"]),
-        int(state.get("end_page") or state["current_sop_page"]),
+        f"Reading SOP page {state['current_sop_page']} of {state['end_page']} and continuity context.",
+        progress_current,
+        progress_total,
     )
     target, next_page = read_sop_page_window(
         state["sop_manifest"],
@@ -280,13 +290,14 @@ def read_sop_page_window_node(
 def plan_sop_page_comparison_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    progress_current, progress_total = _sop_page_progress(state)
     _emit_event(
         state,
         "comparison",
         "plan_sop_page",
-        f"Planning comparison for SOP page {state['current_sop_page']}.",
-        int(state["current_sop_page"]),
-        int(state.get("end_page") or state["current_sop_page"]),
+        f"Planning comparison for SOP page {state['current_sop_page']} of {state['end_page']}.",
+        progress_current,
+        progress_total,
     )
     topic_index_json = json.dumps(
         [topic.model_dump(mode="json") for topic in state["regulatory_topic_index"]],
@@ -451,11 +462,14 @@ def execute_gap_analysis_node(
     item = state["current_plan_item"]
     if item is None:
         raise RuntimeError("No current comparison plan item is available.")
+    progress_current, progress_total = _sop_page_progress(state)
     _emit_event(
         state,
         "comparison",
         "analyze_gap_item",
         f"Analyzing SOP page {state['current_sop_page']} item {state['current_item_number']}.",
+        progress_current,
+        progress_total,
     )
     if state["comparison_memory_mode"] == "compressed":
         regulatory_evidence = _format_compressed_evidence(
@@ -511,13 +525,14 @@ def aggregate_sop_page_result_node(
 def write_page_result_node(
     state: DocumentComparisonState,
 ) -> DocumentComparisonState:
+    progress_current, progress_total = _sop_page_progress(state)
     _emit_event(
         state,
         "comparison",
         "write_page_report",
-        f"Writing page report for SOP page {state['current_sop_page']}.",
-        int(state["current_sop_page"]),
-        int(state["end_page"]),
+        f"Completed SOP page {state['current_sop_page']} of {state['end_page']}.",
+        progress_current,
+        progress_total,
     )
     path = write_page_result(state["comparison_run_dir"], state["page_result"])
     completed_page_paths = state.get("completed_page_result_paths", []) + [path]

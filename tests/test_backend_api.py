@@ -10,7 +10,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
-from backend.services import registry
+from backend.services import job_event_service, registry
 from document_retrieval.schemas import FinalAnswer, RetrievalOutput, RetrievalTrace
 
 
@@ -407,6 +407,189 @@ class BackendApiTests(unittest.TestCase):
             page["sop_page_image_url"],
             f"/assets/documents/{sop['document_id']}/page-image/1",
         )
+
+    def test_create_comparison_reuses_active_comparison_for_same_pair(self):
+        regulatory = self.upload_pdf("regulatory")
+        sop = self.upload_pdf("sop")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": regulatory["document_id"],
+                "sop_document_id": sop["document_id"],
+                "status": "running",
+                "created_at": registry.utc_now(),
+                "started_at": registry.utc_now(),
+                "finished_at": "",
+                "report_json_path": "",
+                "report_md_path": "",
+                "error_message": "",
+            }
+        )
+        registry.upsert_job(
+            {
+                "job_id": "job_000001",
+                "job_type": "compare_documents",
+                "document_id": "",
+                "comparison_id": "cmp_000001",
+                "status": "running",
+                "started_at": registry.utc_now(),
+                "finished_at": "",
+                "error_message": "",
+                "log_path": "",
+            }
+        )
+
+        response = self.client.post(
+            "/comparisons",
+            json={
+                "regulatory_document_id": regulatory["document_id"],
+                "sop_document_id": sop["document_id"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["comparison_id"], "cmp_000001")
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(
+            [row["comparison_id"] for row in registry.read_comparisons()],
+            ["cmp_000001"],
+        )
+
+    def test_get_active_comparison_for_pair_returns_running_comparison(self):
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": "reg_000001",
+                "sop_document_id": "sop_000001",
+                "status": "running",
+                "created_at": "2026-05-22T01:00:00+00:00",
+                "started_at": "2026-05-22T01:00:01+00:00",
+                "finished_at": "",
+                "report_json_path": "",
+                "report_md_path": "",
+                "error_message": "",
+            }
+        )
+
+        response = self.client.get(
+            "/comparisons/by-pair/active",
+            params={
+                "regulatory_document_id": "reg_000001",
+                "sop_document_id": "sop_000001",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["active_comparison_id"], "cmp_000001")
+        self.assertEqual(payload["latest_comparison_id"], "cmp_000001")
+        self.assertEqual(payload["status"], "running")
+        self.assertNotIn("job_id", payload)
+
+    def test_get_comparison_progress_hides_job_id_and_returns_page_progress(self):
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": "reg_000001",
+                "sop_document_id": "sop_000001",
+                "status": "running",
+                "created_at": registry.utc_now(),
+                "started_at": registry.utc_now(),
+                "finished_at": "",
+                "report_json_path": "",
+                "report_md_path": "",
+                "error_message": "",
+            }
+        )
+        registry.upsert_job(
+            {
+                "job_id": "job_000001",
+                "job_type": "compare_documents",
+                "document_id": "",
+                "comparison_id": "cmp_000001",
+                "status": "running",
+                "started_at": registry.utc_now(),
+                "finished_at": "",
+                "error_message": "",
+                "log_path": "",
+            }
+        )
+        job_event_service.append_event(
+            "job_000001",
+            stage="comparison",
+            step="plan_sop_page",
+            message="Planning SOP page 5 of 10.",
+            progress_current=5,
+            progress_total=10,
+        )
+
+        response = self.client.get("/comparisons/cmp_000001/progress")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["comparison_id"], "cmp_000001")
+        self.assertEqual(payload["progress_current"], 5)
+        self.assertEqual(payload["progress_total"], 10)
+        self.assertEqual(payload["progress_percent"], 0.5)
+        self.assertEqual(payload["current_step"], "plan_sop_page")
+        self.assertFalse(payload["report_ready"])
+        self.assertNotIn("job_id", payload)
+        self.assertNotIn("job_id", payload["events"][0])
+
+    def test_completed_comparison_progress_reports_full_progress(self):
+        report_path = self.storage_root / "comparisons" / "cmp_000001" / "final_report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("{}", encoding="utf-8")
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": "reg_000001",
+                "sop_document_id": "sop_000001",
+                "status": "completed",
+                "created_at": registry.utc_now(),
+                "started_at": registry.utc_now(),
+                "finished_at": registry.utc_now(),
+                "report_json_path": str(report_path),
+                "report_md_path": "",
+                "error_message": "",
+            }
+        )
+        registry.upsert_job(
+            {
+                "job_id": "job_000001",
+                "job_type": "compare_documents",
+                "document_id": "",
+                "comparison_id": "cmp_000001",
+                "status": "completed",
+                "started_at": registry.utc_now(),
+                "finished_at": registry.utc_now(),
+                "error_message": "",
+                "log_path": "",
+            }
+        )
+        job_event_service.append_event(
+            "job_000001",
+            stage="comparison",
+            step="write_page_report",
+            message="Completed SOP page 1 of 2.",
+            progress_current=1,
+            progress_total=2,
+        )
+
+        response = self.client.get("/comparisons/cmp_000001/progress")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["message"], "Comparison complete.")
+        self.assertEqual(payload["progress_current"], 2)
+        self.assertEqual(payload["progress_total"], 2)
+        self.assertEqual(payload["progress_percent"], 1.0)
+        self.assertTrue(payload["report_ready"])
 
     def test_comparison_requires_both_documents_processed_and_indexed(self):
         regulatory = self.upload_pdf("regulatory")

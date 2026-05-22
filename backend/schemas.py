@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 DocumentType = Literal["regulatory", "sop"]
 JobType = Literal[
@@ -87,6 +87,42 @@ class ComparisonStatusResponse(BaseModel):
     progress_message: str | None = None
     progress_current: int | None = None
     progress_total: int | None = None
+
+
+class ComparisonProgressEvent(BaseModel):
+    timestamp: str
+    stage: str
+    step: str
+    message: str
+    progress_current: int | None = None
+    progress_total: int | None = None
+
+
+class ComparisonProgressResponse(BaseModel):
+    comparison_id: str
+    regulatory_document_id: str
+    sop_document_id: str
+    status: str
+    current_stage: str | None = None
+    current_step: str | None = None
+    message: str | None = None
+    progress_current: int | None = None
+    progress_total: int | None = None
+    progress_percent: float | None = None
+    report_ready: bool = False
+    report_json_path: str | None = None
+    report_md_path: str | None = None
+    error_message: str | None = None
+    events: list[ComparisonProgressEvent] = Field(default_factory=list)
+
+
+class ActiveComparisonResponse(BaseModel):
+    regulatory_document_id: str
+    sop_document_id: str
+    active_comparison_id: str | None = None
+    latest_comparison_id: str | None = None
+    status: str | None = None
+    message: str | None = None
 
 
 class CopilotQueryRequest(BaseModel):
