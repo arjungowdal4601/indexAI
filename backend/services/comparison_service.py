@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import traceback
 
 from fastapi import BackgroundTasks, HTTPException
 
@@ -54,6 +55,34 @@ def create_comparison(
             status=existing_active["status"],
         )
 
+    latest = latest_comparison_for_pair(regulatory_document_id, sop_document_id)
+    if latest is not None and latest.get("status") == "failed":
+        comparison_id = latest["comparison_id"]
+        run_dir = registry.comparison_root(comparison_id)
+        (run_dir / "logs").mkdir(parents=True, exist_ok=True)
+        registry.upsert_comparison(
+            {
+                **latest,
+                "status": "queued",
+                "started_at": "",
+                "finished_at": "",
+                "error_message": "",
+            }
+        )
+        job = job_service.create_job(
+            "compare_documents",
+            comparison_id=comparison_id,
+            log_path=str(run_dir / "logs" / "run_log.csv"),
+        )
+        job_event_service.append_event(
+            job.job_id,
+            stage="comparison",
+            step="queued",
+            message=f"Queued retry for comparison {comparison_id}.",
+        )
+        background_tasks.add_task(compare_documents_job, job.job_id, comparison_id)
+        return CreateComparisonResponse(comparison_id=comparison_id, job_id=job.job_id, status="queued")
+
     comparison_id = registry.next_comparison_id()
     run_dir = registry.comparison_root(comparison_id)
     (run_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -99,6 +128,43 @@ def create_comparison(
     )
     background_tasks.add_task(compare_documents_job, job.job_id, comparison_id)
     return CreateComparisonResponse(comparison_id=comparison_id, job_id=job.job_id, status="queued")
+
+
+def _format_exception(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _write_error_trace(run_dir: Path, comparison_id: str, exc: Exception) -> Path:
+    logs_dir = run_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    path = logs_dir / "error_trace.txt"
+    path.write_text(
+        (
+            f"comparison_id: {comparison_id}\n"
+            f"error: {_format_exception(exc)}\n\n"
+            f"{traceback.format_exc()}"
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _mark_comparison_state_failed(run_dir: Path, comparison_id: str) -> None:
+    state_dir = run_dir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / "comparison_state.json"
+    if state_path.exists():
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    else:
+        state = {
+            "comparison_run_id": comparison_id,
+            "last_completed_sop_page": 0,
+            "current_sop_page": 1,
+            "completed_item_result_paths": [],
+            "completed_page_result_paths": [],
+        }
+    state["status"] = "failed"
+    state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
 def compare_documents_job(job_id: str, comparison_id: str) -> None:
@@ -153,6 +219,10 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
         )
         job_service.mark_job_completed(job_id)
     except Exception as exc:
+        run_dir = registry.comparison_root(comparison_id)
+        error_text = _format_exception(exc)
+        _mark_comparison_state_failed(run_dir, comparison_id)
+        _write_error_trace(run_dir, comparison_id, exc)
         comparison = registry.get_comparison(comparison_id)
         if comparison is not None:
             registry.upsert_comparison(
@@ -160,16 +230,16 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
                     **comparison,
                     "status": "failed",
                     "finished_at": registry.utc_now(),
-                    "error_message": str(exc),
+                    "error_message": error_text,
                 }
             )
         job_event_service.append_event(
             job_id,
             stage="comparison",
             step="failed",
-            message=str(exc),
+            message=error_text,
         )
-        job_service.mark_job_failed(job_id, exc)
+        job_service.mark_job_failed(job_id, RuntimeError(error_text))
 
 
 def get_comparison_row_or_404(comparison_id: str) -> dict[str, str]:

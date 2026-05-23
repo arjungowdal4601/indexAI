@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from document_comparison.graph import export_graph_mermaid, run_document_comparison
-from document_comparison.llm import LangChainComparisonClient
+from document_comparison.llm import LangChainComparisonClient, _invoke_with_retry
 from document_comparison.nodes import validate_comparison_plan_node
 from document_comparison.prompts import (
     COMPARISON_PLAN_PROMPT,
@@ -549,6 +549,52 @@ class DocumentComparisonGraphTests(unittest.TestCase):
 
 
 class DocumentComparisonSourceTests(unittest.TestCase):
+    def test_llm_invoke_retries_transient_connection_errors(self):
+        class FlakyChain:
+            def __init__(self):
+                self.calls = 0
+
+            def invoke(self, payload):
+                self.calls += 1
+                if self.calls < 3:
+                    raise RuntimeError("Connection error.")
+                return {"ok": True}
+
+        chain = FlakyChain()
+
+        result = _invoke_with_retry(
+            chain,
+            {"payload": "value"},
+            operation="planning",
+            max_attempts=3,
+            initial_delay_seconds=0,
+        )
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(chain.calls, 3)
+
+    def test_llm_invoke_does_not_retry_non_transient_errors(self):
+        class BrokenChain:
+            def __init__(self):
+                self.calls = 0
+
+            def invoke(self, payload):
+                self.calls += 1
+                raise ValueError("schema is invalid")
+
+        chain = BrokenChain()
+
+        with self.assertRaises(ValueError):
+            _invoke_with_retry(
+                chain,
+                {},
+                operation="planning",
+                max_attempts=3,
+                initial_delay_seconds=0,
+            )
+
+        self.assertEqual(chain.calls, 1)
+
     def test_prompts_use_chat_prompt_template(self):
         self.assertIsNotNone(COMPARISON_PLAN_PROMPT)
         self.assertIsNotNone(COMPRESS_REGULATORY_EVIDENCE_PROMPT)

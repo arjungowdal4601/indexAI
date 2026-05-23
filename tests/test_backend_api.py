@@ -107,6 +107,26 @@ def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, compar
     )
 
 
+def fake_compare_documents_connection_error(regulatory_root, sop_root, comparison_run_dir, comparison_run_id, **_kwargs):
+    run_dir = Path(comparison_run_dir)
+    state_dir = run_dir / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "comparison_state.json").write_text(
+        json.dumps(
+            {
+                "comparison_run_id": comparison_run_id,
+                "last_completed_sop_page": 3,
+                "current_sop_page": 4,
+                "completed_item_result_paths": [],
+                "completed_page_result_paths": [],
+                "status": "in_progress",
+            }
+        ),
+        encoding="utf-8",
+    )
+    raise RuntimeError("Connection error.")
+
+
 def fake_retrieve_document(**_kwargs):
     return RetrievalOutput(
         final_answer=FinalAnswer(
@@ -408,6 +428,39 @@ class BackendApiTests(unittest.TestCase):
             f"/assets/documents/{sop['document_id']}/page-image/1",
         )
 
+    def test_comparison_failure_writes_error_trace_and_failed_state(self):
+        regulatory = self.upload_pdf("regulatory")
+        sop = self.upload_pdf("sop")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+
+        with patch(
+            "backend.services.comparison_service.run_document_comparison",
+            side_effect=fake_compare_documents_connection_error,
+        ):
+            response = self.client.post(
+                "/comparisons",
+                json={
+                    "regulatory_document_id": regulatory["document_id"],
+                    "sop_document_id": sop["document_id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        comparison_id = response.json()["comparison_id"]
+        comparison = registry.get_comparison(comparison_id)
+        self.assertEqual(comparison["status"], "failed")
+        self.assertIn("RuntimeError: Connection error.", comparison["error_message"])
+        run_dir = self.storage_root / "comparisons" / comparison_id
+        state = json.loads((run_dir / "state" / "comparison_state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["status"], "failed")
+        self.assertEqual(state["current_sop_page"], 4)
+        error_trace = (run_dir / "logs" / "error_trace.txt").read_text(encoding="utf-8")
+        self.assertIn("RuntimeError: Connection error.", error_trace)
+        self.assertIn("Traceback", error_trace)
+
     def test_create_comparison_reuses_active_comparison_for_same_pair(self):
         regulatory = self.upload_pdf("regulatory")
         sop = self.upload_pdf("sop")
@@ -459,6 +512,62 @@ class BackendApiTests(unittest.TestCase):
             [row["comparison_id"] for row in registry.read_comparisons()],
             ["cmp_000001"],
         )
+
+    def test_create_comparison_retries_latest_failed_comparison_for_same_pair(self):
+        regulatory = self.upload_pdf("regulatory")
+        sop = self.upload_pdf("sop")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+        run_dir = self.storage_root / "comparisons" / "cmp_000001"
+        (run_dir / "state").mkdir(parents=True)
+        (run_dir / "state" / "comparison_state.json").write_text(
+            json.dumps(
+                {
+                    "comparison_run_id": "cmp_000001",
+                    "last_completed_sop_page": 3,
+                    "current_sop_page": 4,
+                    "completed_item_result_paths": [],
+                    "completed_page_result_paths": [],
+                    "status": "failed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": regulatory["document_id"],
+                "sop_document_id": sop["document_id"],
+                "status": "failed",
+                "created_at": registry.utc_now(),
+                "started_at": registry.utc_now(),
+                "finished_at": registry.utc_now(),
+                "report_json_path": "",
+                "report_md_path": "",
+                "error_message": "RuntimeError: Connection error.",
+            }
+        )
+
+        with patch(
+            "backend.services.comparison_service.run_document_comparison",
+            side_effect=fake_compare_documents,
+        ) as run_comparison:
+            response = self.client.post(
+                "/comparisons",
+                json={
+                    "regulatory_document_id": regulatory["document_id"],
+                    "sop_document_id": sop["document_id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["comparison_id"], "cmp_000001")
+        self.assertEqual([row["comparison_id"] for row in registry.read_comparisons()], ["cmp_000001"])
+        self.assertEqual(run_comparison.call_args.kwargs["comparison_run_id"], "cmp_000001")
+        self.assertEqual(run_comparison.call_args.kwargs["comparison_run_dir"], run_dir)
 
     def test_get_active_comparison_for_pair_returns_running_comparison(self):
         registry.upsert_comparison(
