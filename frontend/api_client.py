@@ -125,6 +125,10 @@ def create_comparison(
     )
 
 
+def list_comparisons(base_url: str | None = None) -> dict[str, Any]:
+    return _request_json("GET", "/comparisons", base_url=base_url)
+
+
 def get_comparison(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", f"/comparisons/{comparison_id}", base_url=base_url)
 

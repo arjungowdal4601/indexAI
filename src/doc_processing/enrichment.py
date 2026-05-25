@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Protocol, Tuple
 
+from backend.services.retry_utils import run_with_retries
+
 from .config import (
     FORMULA_IMAGE_FOLDER,
     IMAGE_PLACEHOLDER,
@@ -275,6 +277,7 @@ def replace_tables(
     table_fragments: Dict[Tuple[int, int], TableFragment],
     client: EnrichmentClient,
     previous_by_table_id: Dict[str, TableFragment],
+    event_callback=None,
 ) -> str:
     lines = markdown.splitlines()
     ranges = find_table_line_ranges(lines)
@@ -300,7 +303,26 @@ def replace_tables(
             previous_markdown=previous.raw_markdown if previous else None,
             previous_image_path=previous.image_path if previous else None,
         )
-        description = client.describe_table(request).strip()
+        if event_callback is not None:
+            event_callback(
+                "document_processing",
+                "waiting_for_llm",
+                f"Waiting for LLM response for page {page_no} / table {table_index}",
+                page_no,
+                None,
+            )
+        description = run_with_retries(
+            lambda: client.describe_table(request),
+            on_retry=lambda attempt, exc: event_callback(
+                "document_processing",
+                "retry",
+                f"Retrying LLM call for page {page_no}, attempt {attempt}: {type(exc).__name__}: {exc}",
+                page_no,
+                None,
+            )
+            if event_callback is not None
+            else None,
+        ).strip()
         output_lines.append(
             build_visual_markdown_block("Table", fragment.image_path, description)
         )
@@ -318,6 +340,8 @@ def replace_image_placeholders(
     markdown: str,
     image_paths: Iterator[Path],
     client: EnrichmentClient,
+    page_no: int | None = None,
+    event_callback=None,
 ) -> str:
     output_parts: List[str] = []
     cursor = 0
@@ -334,7 +358,26 @@ def replace_image_placeholders(
         except StopIteration:
             raise RuntimeError("Image placeholder found but no image asset remains.")
         else:
-            description = client.describe_image(image_path).strip()
+            if event_callback is not None:
+                event_callback(
+                    "document_processing",
+                    "waiting_for_llm",
+                    f"Waiting for LLM response for page {page_no} / figure {image_path.name}",
+                    page_no,
+                    None,
+                )
+            description = run_with_retries(
+                lambda: client.describe_image(image_path),
+                on_retry=lambda attempt, exc: event_callback(
+                    "document_processing",
+                    "retry",
+                    f"Retrying LLM call for page {page_no}, attempt {attempt}: {type(exc).__name__}: {exc}",
+                    page_no,
+                    None,
+                )
+                if event_callback is not None
+                else None,
+            ).strip()
             output_parts.append(
                 build_visual_markdown_block("Figure", image_path, description)
             )
@@ -347,6 +390,8 @@ def replace_formula_blocks(
     markdown: str,
     formula_paths: Iterator[Path],
     client: EnrichmentClient,
+    page_no: int | None = None,
+    event_callback=None,
 ) -> str:
     def replace_match(match: re.Match[str]) -> str:
         formula_markdown = match.group(0)
@@ -354,7 +399,26 @@ def replace_formula_blocks(
             formula_path = next(formula_paths)
         except StopIteration:
             raise RuntimeError("Formula block found but no formula image asset remains.")
-        description = client.describe_formula(formula_path, formula_markdown).strip()
+        if event_callback is not None:
+            event_callback(
+                "document_processing",
+                "waiting_for_llm",
+                f"Waiting for LLM response for page {page_no} / formula {formula_path.name}",
+                page_no,
+                None,
+            )
+        description = run_with_retries(
+            lambda: client.describe_formula(formula_path, formula_markdown),
+            on_retry=lambda attempt, exc: event_callback(
+                "document_processing",
+                "retry",
+                f"Retrying LLM call for page {page_no}, attempt {attempt}: {type(exc).__name__}: {exc}",
+                page_no,
+                None,
+            )
+            if event_callback is not None
+            else None,
+        ).strip()
         return build_visual_markdown_block("Formula", formula_path, description)
 
     return FORMULA_BLOCK_PATTERN.sub(replace_match, markdown)
@@ -368,6 +432,7 @@ def enrich_page_markdown(
     formula_paths: Iterator[Path],
     client: EnrichmentClient,
     previous_by_table_id: Dict[str, TableFragment],
+    event_callback=None,
 ) -> str:
     enriched = replace_tables(
         markdown=markdown,
@@ -375,19 +440,53 @@ def enrich_page_markdown(
         table_fragments=table_fragments,
         client=client,
         previous_by_table_id=previous_by_table_id,
+        event_callback=event_callback,
     )
 
-    enriched = replace_image_placeholders(enriched, image_paths, client)
+    enriched = replace_image_placeholders(
+        enriched,
+        image_paths,
+        client,
+        page_no=page_no,
+        event_callback=event_callback,
+    )
 
-    enriched = replace_formula_blocks(enriched, formula_paths, client)
+    enriched = replace_formula_blocks(
+        enriched,
+        formula_paths,
+        client,
+        page_no=page_no,
+        event_callback=event_callback,
+    )
 
     return enriched.strip() + "\n"
+
+
+def _advance_resume_context_for_page(
+    page_no: int,
+    markdown: str,
+    table_fragments: Dict[Tuple[int, int], TableFragment],
+    image_paths: Iterator[Path],
+    formula_paths: Iterator[Path],
+    previous_by_table_id: Dict[str, TableFragment],
+) -> None:
+    lines = markdown.splitlines()
+    for table_index, _range in enumerate(find_table_line_ranges(lines), start=1):
+        fragment = table_fragments.get((page_no, table_index))
+        if fragment and fragment.is_multi_page:
+            previous_by_table_id[fragment.table_id] = fragment
+    for _ in range(markdown.count(IMAGE_PLACEHOLDER)):
+        next(image_paths)
+    for _match in FORMULA_BLOCK_PATTERN.finditer(markdown):
+        next(formula_paths)
 
 
 def enrich_document(
     docling_assets_dir: str | Path,
     client: Optional[EnrichmentClient] = None,
     output_root: Optional[str | Path] = None,
+    event_callback=None,
+    resume: bool = False,
 ) -> EnrichmentOutput:
     docling_assets_dir = Path(docling_assets_dir)
     pages_md_dir = docling_assets_dir / PAGE_MD_FOLDER
@@ -425,7 +524,7 @@ def enrich_document(
         table_images=table_paths,
     )
 
-    if enriched_root.exists():
+    if enriched_root.exists() and not resume:
         shutil.rmtree(enriched_root)
     enriched_pages_dir.mkdir(parents=True, exist_ok=True)
     copy_visual_asset_folders(docling_assets_dir, enriched_root)
@@ -438,6 +537,18 @@ def enrich_document(
     print("Document enrichment started.")
     for page_no, markdown in pages.items():
         print(f"  - enriching page {page_no}")
+        page_file = enriched_pages_dir / f"page_{page_no:04d}.md"
+        if resume and page_file.exists():
+            _advance_resume_context_for_page(
+                page_no,
+                markdown,
+                table_fragments,
+                image_paths,
+                formula_path_iter,
+                previous_by_table_id,
+            )
+            stitched_parts.append(page_file.read_text(encoding="utf-8"))
+            continue
         enriched_page = enrich_page_markdown(
             markdown=markdown,
             page_no=page_no,
@@ -446,9 +557,9 @@ def enrich_document(
             formula_paths=formula_path_iter,
             client=client,
             previous_by_table_id=previous_by_table_id,
+            event_callback=event_callback,
         )
 
-        page_file = enriched_pages_dir / f"page_{page_no:04d}.md"
         page_file.write_text(enriched_page, encoding="utf-8")
         stitched_parts.append(enriched_page)
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Optional
 
+from backend.services.retry_utils import run_with_retries
+
 from .llm import TopicIndexingClient
 from .schemas import (
     PageWindow,
@@ -86,6 +88,9 @@ def _update_topic_index(
     candidates: list[TopicCandidate],
     decisions: list[TopicMatchDecision],
     client: TopicIndexingClient,
+    event_callback=None,
+    target_page: int | None = None,
+    total_pages: int | None = None,
 ) -> tuple[list[TopicEntry], list[str], list[str]]:
     topics = list(current_index)
     added: list[str] = []
@@ -104,7 +109,26 @@ def _update_topic_index(
 
         existing_topic = _find_topic(topics, decision.matched_topic)
         if decision.decision == "update_existing" and existing_topic is not None:
-            merged_description = client.merge_topic(existing_topic, candidate)
+            if event_callback is not None:
+                event_callback(
+                    "document_indexing",
+                    "waiting_for_llm",
+                    f"Waiting for LLM response for indexing page {target_page} merge topic",
+                    target_page,
+                    total_pages,
+                )
+            merged_description = run_with_retries(
+                lambda: client.merge_topic(existing_topic, candidate),
+                on_retry=lambda attempt, exc: event_callback(
+                    "document_indexing",
+                    "retry",
+                    f"Retrying indexing LLM call for page {target_page}, attempt {attempt}: {type(exc).__name__}: {exc}",
+                    target_page,
+                    total_pages,
+                )
+                if event_callback is not None
+                else None,
+            )
             replacement = TopicEntry(
                 topic=existing_topic.topic,
                 pages=sorted(set(existing_topic.pages + candidate.pages)),
@@ -129,6 +153,72 @@ def _update_topic_index(
         added.append(candidate.topic)
 
     return topics, added, updated
+
+
+def _write_failed_indexing_state(
+    state: DocumentIndexingState,
+    stage: str,
+    exc: Exception,
+) -> None:
+    processing_state = state.get("processing_state")
+    window = state.get("current_window")
+    failed_page = window.target_page.page if window is not None else None
+    failed_state = ProcessingState(
+        document_id=state["document_id"],
+        last_completed_page=(
+            processing_state.last_completed_page if processing_state is not None else 0
+        ),
+        next_start_page=(
+            processing_state.next_start_page
+            if processing_state is not None
+            else failed_page or 1
+        ),
+        main_window_size=state["main_window_size"],
+        context_window_size=state["context_window_size"],
+        status="failed",
+        failed_page=failed_page,
+        failed_stage=stage,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+    write_processing_state(state["output_folder_path"], failed_state)
+
+
+def _run_indexing_llm_call(
+    state: DocumentIndexingState,
+    stage: str,
+    message: str,
+    func,
+):
+    window = state.get("current_window")
+    manifest = state.get("manifest")
+    target_page = window.target_page.page if window is not None else None
+    total_pages = manifest.total_pages if manifest is not None else None
+    callback = state.get("event_callback")
+    if callback is not None:
+        callback(
+            "document_indexing",
+            "waiting_for_llm",
+            message,
+            target_page,
+            total_pages,
+        )
+    try:
+        return run_with_retries(
+            func,
+            on_retry=lambda attempt, exc: callback(
+                "document_indexing",
+                "retry",
+                f"Retrying indexing LLM call for page {target_page}, attempt {attempt}: {type(exc).__name__}: {exc}",
+                target_page,
+                total_pages,
+            )
+            if callback is not None
+            else None,
+        )
+    except Exception as exc:
+        _write_failed_indexing_state(state, stage, exc)
+        raise
 
 
 def build_revision_log_entry(
@@ -208,12 +298,17 @@ def read_index_node(state: DocumentIndexingState) -> DocumentIndexingState:
 def extract_candidates_node(state: DocumentIndexingState) -> DocumentIndexingState:
     window = state["current_window"]
     target_page = window.target_page.page
-    raw_candidates = state["client"].extract_candidates(
-        window.target_page,
-        window.target_page_assets,
-        window.previous_page_topics,
-        window.next_page,
-        state["current_topic_index"],
+    raw_candidates = _run_indexing_llm_call(
+        state,
+        "extract_candidates",
+        f"Waiting for LLM response for indexing page {target_page}",
+        lambda: state["client"].extract_candidates(
+            window.target_page,
+            window.target_page_assets,
+            window.previous_page_topics,
+            window.next_page,
+            state["current_topic_index"],
+        ),
     )
     candidates = [
         _candidate_from_draft(
@@ -227,20 +322,33 @@ def extract_candidates_node(state: DocumentIndexingState) -> DocumentIndexingSta
 
 
 def match_candidates_node(state: DocumentIndexingState) -> DocumentIndexingState:
-    decisions = state["client"].match_topics(
-        state["candidate_topics"],
-        state["current_topic_index"],
+    window = state["current_window"]
+    decisions = _run_indexing_llm_call(
+        state,
+        "match_topics",
+        f"Waiting for LLM response for indexing page {window.target_page.page} topic matching",
+        lambda: state["client"].match_topics(
+            state["candidate_topics"],
+            state["current_topic_index"],
+        ),
     )
     return {"match_decisions": decisions}
 
 
 def update_index_node(state: DocumentIndexingState) -> DocumentIndexingState:
-    updated_index, added, updated = _update_topic_index(
-        current_index=state["current_topic_index"],
-        candidates=state["candidate_topics"],
-        decisions=state["match_decisions"],
-        client=state["client"],
-    )
+    try:
+        updated_index, added, updated = _update_topic_index(
+            current_index=state["current_topic_index"],
+            candidates=state["candidate_topics"],
+            decisions=state["match_decisions"],
+            client=state["client"],
+            event_callback=state.get("event_callback"),
+            target_page=state["current_window"].target_page.page,
+            total_pages=state["manifest"].total_pages,
+        )
+    except Exception as exc:
+        _write_failed_indexing_state(state, "merge_topic", exc)
+        raise
     report, cleaned_index = validate_topic_index(
         updated_index,
         token_limit=state["token_limit"],

@@ -88,6 +88,10 @@ class ProcessingState(StrictModel):
     main_window_size: int
     context_window_size: int
     status: Literal["in_progress", "completed", "failed"] = "in_progress"
+    failed_page: int | None = None
+    failed_stage: str | None = None
+    error_type: str | None = None
+    error_message: str | None = None
 
 
 class ValidationReport(StrictModel):

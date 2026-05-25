@@ -36,6 +36,7 @@ from .routers import (
     route_after_context_estimate,
     route_after_page_result,
     route_after_plan_item_queue,
+    route_after_regulatory_index,
 )
 from .schemas import ComparisonRunOutput
 from .state import DocumentComparisonState
@@ -71,7 +72,14 @@ def build_document_comparison_graph():
     builder.add_edge("initialize_comparison_run", "load_comparison_state")
     builder.add_edge("load_comparison_state", "load_document_manifests")
     builder.add_edge("load_document_manifests", "load_regulatory_topic_index")
-    builder.add_edge("load_regulatory_topic_index", "read_sop_page_window")
+    builder.add_conditional_edges(
+        "load_regulatory_topic_index",
+        route_after_regulatory_index,
+        {
+            "read_page": "read_sop_page_window",
+            "finished": "aggregate_final_gap_report",
+        },
+    )
     builder.add_edge("read_sop_page_window", "plan_sop_page_comparison")
     builder.add_edge("plan_sop_page_comparison", "validate_comparison_plan")
     builder.add_edge("validate_comparison_plan", "initialize_plan_item_queue")

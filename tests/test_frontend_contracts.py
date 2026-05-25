@@ -230,6 +230,26 @@ class FrontendApiClientTests(unittest.TestCase):
         self.assertEqual(captured["url"], "http://api.local/comparisons/cmp_000001/progress")
         self.assertEqual(captured["method"], "GET")
 
+    def test_list_comparisons_calls_comparisons_endpoint(self):
+        from frontend import api_client
+
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["method"] = request.get_method()
+            return FakeHttpResponse({"comparisons": []})
+
+        with patch.dict(
+            os.environ,
+            {"DOC_COMPARING_API_BASE_URL": "http://api.local"},
+        ), patch("frontend.api_client.urlopen", side_effect=fake_urlopen):
+            result = api_client.list_comparisons()
+
+        self.assertEqual(result, {"comparisons": []})
+        self.assertEqual(captured["url"], "http://api.local/comparisons")
+        self.assertEqual(captured["method"], "GET")
+
 
 class FrontendContractTests(unittest.TestCase):
     def test_streamlit_frontend_files_exist(self):
@@ -280,9 +300,23 @@ class FrontendContractTests(unittest.TestCase):
 
         self.assertIn("render_comparison_progress", source)
         self.assertIn("get_active_comparison_for_pair", source)
+        self.assertIn("st.dataframe", source)
+        self.assertIn("selected_regulatory_document_id", source)
+        self.assertIn("selected_sop_document_id", source)
+        self.assertIn("Document ID", source)
+        self.assertIn("Filename", source)
         self.assertNotIn("render_job_monitor", source)
         self.assertNotIn("last_job_id", source)
         self.assertNotIn("Job ID", source)
+        self.assertNotIn("st.text_input", source)
+
+    def test_review_report_uses_comparison_browser_not_manual_id_input(self):
+        source = Path("frontend/pages/3_Review_Report.py").read_text(encoding="utf-8")
+
+        self.assertIn("Comparison Reports", source)
+        self.assertIn("list_comparisons", source)
+        self.assertIn("selected_comparison_id", source)
+        self.assertIn("View", source)
         self.assertNotIn("st.text_input", source)
 
     def test_comparison_progress_uses_status_container_without_job_id(self):
@@ -295,6 +329,9 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("st.status", function_source)
         self.assertIn("Comparison running", function_source)
         self.assertIn("get_comparison_progress", function_source)
+        self.assertIn("waiting_for_llm", function_source)
+        self.assertIn("retry", function_source)
+        self.assertIn("failed", function_source)
         self.assertIn("Show comparison steps", function_source)
         self.assertNotIn("job_id", function_source)
 

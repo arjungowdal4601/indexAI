@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from document_comparison.graph import export_graph_mermaid, run_document_comparison
 from document_comparison.llm import LangChainComparisonClient, _invoke_with_retry
@@ -110,6 +111,27 @@ class FakeComparisonClient:
             gap_explanation="The SOP evidence was compared against regulatory evidence.",
             recommended_action="No action required.",
             missing_or_weak_elements=[],
+        )
+
+
+class FlakyGapComparisonClient(FakeComparisonClient):
+    def __init__(self):
+        super().__init__()
+        self.gap_attempts = 0
+
+    def execute_gap_analysis(
+        self,
+        plan_item,
+        regulatory_evidence,
+        comparison_memory_mode,
+    ):
+        self.gap_attempts += 1
+        if self.gap_attempts == 1:
+            raise RuntimeError("Connection timeout 503")
+        return super().execute_gap_analysis(
+            plan_item,
+            regulatory_evidence,
+            comparison_memory_mode,
         )
 
 
@@ -556,6 +578,96 @@ class DocumentComparisonGraphTests(unittest.TestCase):
                 [(event["progress_current"], event["progress_total"]) for event in write_events],
                 [(1, 2), (2, 2)],
             )
+
+    def test_comparison_retries_transient_gap_analysis_and_emits_retry_event(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            reg_root = make_document_root(
+                base,
+                "regulatory",
+                "reg_v1",
+                total_pages=1,
+                topic_index=regulatory_topics(),
+            )
+            sop_root = make_document_root(base, "sop", "sop_v1", total_pages=1)
+            run_dir = base / "comparison_runs" / "run_retry"
+            events = []
+            client = FlakyGapComparisonClient()
+
+            with patch("backend.services.retry_utils.time.sleep", return_value=None):
+                run_document_comparison(
+                    regulatory_root=reg_root,
+                    sop_root=sop_root,
+                    comparison_run_dir=run_dir,
+                    comparison_run_id="run_retry",
+                    client=client,
+                    end_page=1,
+                    event_callback=lambda *args: events.append(args),
+                )
+
+            page_reports = list((run_dir / "page_reports").glob("sop_page_*.json"))
+
+        self.assertEqual(client.gap_attempts, 2)
+        self.assertEqual(len(page_reports), 1)
+        self.assertTrue(any(event[1] == "waiting_for_llm" for event in events))
+        self.assertTrue(any(event[1] == "retry" for event in events))
+
+    def test_comparison_resume_skips_existing_page_report_even_if_state_is_stale(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            reg_root = make_document_root(
+                base,
+                "regulatory",
+                "reg_v1",
+                total_pages=1,
+                topic_index=regulatory_topics(),
+            )
+            sop_root = make_document_root(base, "sop", "sop_v1", total_pages=2)
+            run_dir = base / "comparison_runs" / "run_skip_page"
+            page_reports = run_dir / "page_reports"
+            state_dir = run_dir / "state"
+            page_reports.mkdir(parents=True)
+            state_dir.mkdir(parents=True)
+            (page_reports / "sop_page_0001.json").write_text(
+                json.dumps(
+                    {
+                        "sop_page": 1,
+                        "sop_page_summary": "Existing page 1 result.",
+                        "findings": [],
+                        "page_status": "not_applicable",
+                        "high_priority_count": 0,
+                        "human_review_count": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (state_dir / "comparison_state.json").write_text(
+                json.dumps(
+                    {
+                        "comparison_run_id": "run_skip_page",
+                        "last_completed_sop_page": 0,
+                        "current_sop_page": 1,
+                        "completed_item_result_paths": [],
+                        "completed_page_result_paths": [],
+                        "status": "failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            client = FakeComparisonClient()
+
+            run_document_comparison(
+                regulatory_root=reg_root,
+                sop_root=sop_root,
+                comparison_run_dir=run_dir,
+                comparison_run_id="run_skip_page",
+                client=client,
+                start_page=1,
+                end_page=2,
+                resume=True,
+            )
+
+        self.assertEqual(client.planned_pages, [2])
 
     def test_graph_exports_mermaid(self):
         with tempfile.TemporaryDirectory() as temp_dir:

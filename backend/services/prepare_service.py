@@ -50,7 +50,7 @@ def start_prepare_job(document_id: str, background_tasks: BackgroundTasks) -> Jo
             **document,
             "processing_status": (
                 document["processing_status"]
-                if document["processing_status"] == "completed"
+                if document["processing_status"] in {"completed", "failed"}
                 else "queued"
             ),
             "indexing_status": (

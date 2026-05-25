@@ -89,6 +89,23 @@ class ComparisonStatusResponse(BaseModel):
     progress_total: int | None = None
 
 
+class ComparisonListItem(BaseModel):
+    comparison_id: str
+    regulatory_document_id: str
+    regulatory_filename: str | None = None
+    sop_document_id: str
+    sop_filename: str | None = None
+    status: str
+    created_at: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    report_ready: bool = False
+
+
+class ComparisonListResponse(BaseModel):
+    comparisons: list[ComparisonListItem]
+
+
 class ComparisonProgressEvent(BaseModel):
     timestamp: str
     stage: str

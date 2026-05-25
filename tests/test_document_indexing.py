@@ -3,6 +3,7 @@ import inspect
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from document_indexing import run_document_indexing
 from document_indexing.graph import export_graph_mermaid
@@ -103,6 +104,17 @@ class FakeIndexingClient:
             "Explains capital rules across reporting, buffer, and threshold "
             "requirements."
         )
+
+
+class FlakyExtractIndexingClient(FakeIndexingClient):
+    def __init__(self):
+        self.extract_attempts = 0
+
+    def extract_candidates(self, *args, **kwargs):
+        self.extract_attempts += 1
+        if self.extract_attempts == 1:
+            raise RuntimeError("Connection timeout 503")
+        return super().extract_candidates(*args, **kwargs)
 
 
 class DocumentIndexingStorageTests(unittest.TestCase):
@@ -499,6 +511,37 @@ class DocumentIndexingGraphTests(unittest.TestCase):
                 ("document_indexing", "indexing_page", "Indexing page 3 of 3", 3, 3),
                 events,
             )
+
+    def test_indexing_retries_transient_llm_errors_and_emits_waiting_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pages_dir = root / "pages_md"
+            output_dir = root / "indexing_output"
+            events = []
+            pages_dir.mkdir()
+            (pages_dir / "page_0001.md").write_text(
+                "Neutral policy content on page 1.",
+                encoding="utf-8",
+            )
+            client = FlakyExtractIndexingClient()
+
+            with patch("backend.services.retry_utils.time.sleep", return_value=None):
+                output = run_document_indexing(
+                    pages_folder_path=pages_dir,
+                    output_folder_path=output_dir,
+                    document_id="capital-doc",
+                    main_window_size=1,
+                    context_window_size=1,
+                    client=client,
+                    event_callback=lambda *args: events.append(args),
+                )
+
+            processing_state = json.loads(output.processing_state_path.read_text())
+
+        self.assertEqual(client.extract_attempts, 2)
+        self.assertEqual(processing_state["status"], "completed")
+        self.assertTrue(any(event[1] == "waiting_for_llm" for event in events))
+        self.assertTrue(any(event[1] == "retry" for event in events))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@ from fastapi import BackgroundTasks, HTTPException
 
 from backend.schemas import (
     ActiveComparisonResponse,
+    ComparisonListItem,
+    ComparisonListResponse,
     ComparisonProgressEvent,
     ComparisonProgressResponse,
     ComparisonStatusResponse,
@@ -140,13 +142,36 @@ def _format_exception(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _comparison_state_payload(run_dir: Path) -> dict:
+    state_path = run_dir / "state" / "comparison_state.json"
+    if not state_path.exists():
+        return {}
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _latest_comparison_event(comparison_id: str):
+    events = _comparison_events_for_job(comparison_id)
+    return events[-1] if events else None
+
+
 def _write_error_trace(run_dir: Path, comparison_id: str, exc: Exception) -> Path:
     logs_dir = run_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     path = logs_dir / "error_trace.txt"
+    state = _comparison_state_payload(run_dir)
+    latest_event = _latest_comparison_event(comparison_id)
     path.write_text(
         (
             f"comparison_id: {comparison_id}\n"
+            f"sop_page: {state.get('current_sop_page', '')}\n"
+            f"plan_item_id: \n"
+            f"stage: {latest_event.stage if latest_event else 'comparison'}\n"
+            f"step: {latest_event.step if latest_event else ''}\n"
+            f"exception_type: {type(exc).__name__}\n"
+            f"exception_message: {exc}\n"
             f"error: {_format_exception(exc)}\n\n"
             f"{traceback.format_exc()}"
         ),
@@ -308,6 +333,32 @@ def latest_comparison_for_pair(
 ) -> dict[str, str] | None:
     rows = comparisons_for_pair(regulatory_document_id, sop_document_id)
     return rows[-1] if rows else None
+
+
+def list_comparisons() -> ComparisonListResponse:
+    rows = sorted(registry.read_comparisons(), key=_comparison_sort_key, reverse=True)
+    documents = {document["document_id"]: document for document in registry.read_documents()}
+    items = []
+    for row in rows:
+        regulatory = documents.get(row.get("regulatory_document_id", ""))
+        sop = documents.get(row.get("sop_document_id", ""))
+        report_path = row.get("report_json_path")
+        report_ready = bool(report_path) and Path(report_path).exists() and row.get("status") == "completed"
+        items.append(
+            ComparisonListItem(
+                comparison_id=row["comparison_id"],
+                regulatory_document_id=row["regulatory_document_id"],
+                regulatory_filename=regulatory.get("original_filename") if regulatory else None,
+                sop_document_id=row["sop_document_id"],
+                sop_filename=sop.get("original_filename") if sop else None,
+                status=row["status"],
+                created_at=row.get("created_at") or None,
+                started_at=row.get("started_at") or None,
+                finished_at=row.get("finished_at") or None,
+                report_ready=report_ready,
+            )
+        )
+    return ComparisonListResponse(comparisons=items)
 
 
 def get_active_comparison_for_pair(

@@ -38,6 +38,43 @@ def append_event(
     return event
 
 
+def append_waiting_for_llm(
+    job_id: str,
+    stage: str,
+    step: str,
+    message: str,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+) -> JobEvent:
+    return append_event(
+        job_id,
+        stage=stage,
+        step=step,
+        message=message,
+        progress_current=progress_current,
+        progress_total=progress_total,
+    )
+
+
+def append_retry(
+    job_id: str,
+    stage: str,
+    step: str,
+    attempt: int,
+    error: Exception,
+    progress_current: int | None = None,
+    progress_total: int | None = None,
+) -> JobEvent:
+    return append_event(
+        job_id,
+        stage=stage,
+        step=step,
+        message=f"Retry attempt {attempt}: {type(error).__name__}: {error}",
+        progress_current=progress_current,
+        progress_total=progress_total,
+    )
+
+
 def read_events(job_id: str) -> JobEventsResponse:
     path = _events_path(job_id)
     events: list[JobEvent] = []

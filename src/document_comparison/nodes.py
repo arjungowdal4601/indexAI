@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Literal
 
+from backend.services.retry_utils import run_with_retries
+
 from .config import estimate_tokens
 from .report import build_gap_report, write_reports
 from .schemas import (
@@ -18,11 +20,17 @@ from .schemas import (
 from .state import DocumentComparisonState
 from .storage import (
     ensure_run_directories,
+    item_result_path,
     load_comparison_state,
     load_document_manifest,
     load_topic_index,
+    page_result_path,
+    read_comparison_plan,
+    read_compressed_evidence,
+    read_item_result,
     read_page_results,
     read_regulatory_pages,
+    read_regulatory_pages_evidence,
     read_sop_page_window,
     write_comparison_plan,
     write_comparison_state,
@@ -134,6 +142,35 @@ def _sop_page_progress(state: DocumentComparisonState) -> tuple[int, int]:
     return current, total
 
 
+def _run_comparison_llm_call(
+    state: DocumentComparisonState,
+    step: str,
+    waiting_message: str,
+    retry_message,
+    func,
+):
+    progress_current, progress_total = _sop_page_progress(state)
+    _emit_event(
+        state,
+        "comparison",
+        "waiting_for_llm",
+        waiting_message,
+        progress_current,
+        progress_total,
+    )
+    return run_with_retries(
+        func,
+        on_retry=lambda attempt, exc: _emit_event(
+            state,
+            "comparison",
+            "retry",
+            retry_message(attempt, exc),
+            progress_current,
+            progress_total,
+        ),
+    )
+
+
 def _format_page_contexts(page_contexts) -> str:
     return "\n\n".join(
         f"--- REGULATORY PAGE {context.page} ---\n{context.markdown}"
@@ -158,7 +195,9 @@ def _previous_page_summary(state: DocumentComparisonState) -> str:
     page_no = int(state["current_sop_page"]) - 1
     if page_no < 1:
         return ""
-    path = Path(state["comparison_run_dir"]) / "page_results" / f"sop_page_{page_no:04d}.json"
+    path = page_result_path(state["comparison_run_dir"], page_no)
+    if not path.exists():
+        path = Path(state["comparison_run_dir"]) / "page_results" / f"sop_page_{page_no:04d}.json"
     if not path.exists():
         return ""
     result = PageComparisonResult.model_validate_json(path.read_text(encoding="utf-8"))
@@ -196,6 +235,25 @@ def load_comparison_state_node(
         start_page=state["start_page"],
         resume=state.get("resume", True),
     )
+    completed_page_paths = [Path(path) for path in state_file.completed_page_result_paths]
+    current_page = int(state_file.current_sop_page)
+    while page_result_path(state["comparison_run_dir"], current_page).exists():
+        path = page_result_path(state["comparison_run_dir"], current_page)
+        if path not in completed_page_paths:
+            completed_page_paths.append(path)
+        _emit_event(
+            state,
+            "comparison",
+            "write_page_report",
+            f"Completed SOP page {current_page} from existing checkpoint.",
+        )
+        state_file.last_completed_sop_page = current_page
+        current_page += 1
+        state_file.current_sop_page = current_page
+        state_file.status = "in_progress"
+    if completed_page_paths != [Path(path) for path in state_file.completed_page_result_paths]:
+        state_file.completed_page_result_paths = [str(path) for path in completed_page_paths]
+        write_comparison_state(state["comparison_run_dir"], state_file)
     return {
         "state_file": state_file,
         "current_sop_page": state_file.current_sop_page,
@@ -203,9 +261,7 @@ def load_comparison_state_node(
         "completed_item_result_paths": [
             Path(path) for path in state_file.completed_item_result_paths
         ],
-        "completed_page_result_paths": [
-            Path(path) for path in state_file.completed_page_result_paths
-        ],
+        "completed_page_result_paths": completed_page_paths,
     }
 
 
@@ -235,12 +291,19 @@ def load_document_manifests_node(
         max_direct_estimated_tokens=state["max_direct_estimated_tokens"],
     )
     write_run_config(state["comparison_run_dir"], run_config)
-    return {
+    updates = {
         "regulatory_manifest": regulatory_manifest,
         "sop_manifest": sop_manifest,
         "end_page": end_page,
         "run_config": run_config,
     }
+    state_file = state.get("state_file")
+    if state_file is not None and int(state.get("current_sop_page") or 1) > int(end_page):
+        state_file.status = "completed"
+        write_comparison_state(state["comparison_run_dir"], state_file)
+        updates["state_file"] = state_file
+        updates["run_status"] = "completed"
+    return updates
 
 
 def load_regulatory_topic_index_node(
@@ -299,16 +362,31 @@ def plan_sop_page_comparison_node(
         progress_current,
         progress_total,
     )
+    existing_plan = read_comparison_plan(
+        state["comparison_run_dir"],
+        int(state["current_sop_page"]),
+    )
+    if existing_plan is not None:
+        return {"comparison_plan": existing_plan}
     topic_index_json = json.dumps(
         [topic.model_dump(mode="json") for topic in state["regulatory_topic_index"]],
         indent=2,
         ensure_ascii=False,
     )
-    plan = state["client"].plan_sop_page_comparison(
-        state["sop_target_page"],
-        state.get("sop_next_page"),
-        state.get("previous_sop_page_summary", ""),
-        topic_index_json,
+    plan = _run_comparison_llm_call(
+        state,
+        "plan_sop_page",
+        f"Waiting for LLM response for SOP page {state['current_sop_page']} plan",
+        lambda attempt, exc: (
+            f"Retrying SOP page {state['current_sop_page']} plan, attempt {attempt}: "
+            f"{type(exc).__name__}: {exc}"
+        ),
+        lambda: state["client"].plan_sop_page_comparison(
+            state["sop_target_page"],
+            state.get("sop_next_page"),
+            state.get("previous_sop_page_summary", ""),
+            topic_index_json,
+        ),
     )
     write_comparison_plan(state["comparison_run_dir"], plan)
     return {"comparison_plan": plan}
@@ -364,26 +442,49 @@ def initialize_plan_item_queue_node(
 ) -> DocumentComparisonState:
     queue = state.get("pending_plan_items")
     findings = state.get("current_page_findings", [])
+    item_paths = state.get("current_page_item_result_paths", [])
     if queue is None:
         queue = list(state["comparison_plan"].plan_items)
         findings = []
+        item_paths = []
     else:
         queue = list(queue)
 
-    if not queue:
-        return {
-            "pending_plan_items": [],
-            "current_plan_item": None,
-            "current_page_findings": findings,
-        }
+    while queue:
+        current = queue.pop(0)
+        item_number = len(state["comparison_plan"].plan_items) - len(queue)
+        existing_finding = read_item_result(
+            state["comparison_run_dir"],
+            int(state["current_sop_page"]),
+            item_number,
+        )
+        if existing_finding is None:
+            return {
+                "pending_plan_items": queue,
+                "current_plan_item": current,
+                "current_item_number": item_number,
+                "current_page_findings": findings,
+                "current_page_item_result_paths": item_paths,
+            }
+        path = item_result_path(
+            state["comparison_run_dir"],
+            int(state["current_sop_page"]),
+            item_number,
+        )
+        findings = findings + [existing_finding]
+        item_paths = item_paths + [path]
 
-    current = queue.pop(0)
-    item_number = len(state["comparison_plan"].plan_items) - len(queue)
     return {
-        "pending_plan_items": queue,
-        "current_plan_item": current,
-        "current_item_number": item_number,
+        "pending_plan_items": [],
+        "current_plan_item": None,
         "current_page_findings": findings,
+        "current_page_item_result_paths": item_paths,
+        "completed_item_result_paths": state.get("completed_item_result_paths", [])
+        + [
+            path
+            for path in item_paths
+            if path not in state.get("completed_item_result_paths", [])
+        ],
     }
 
 
@@ -397,6 +498,13 @@ def read_regulatory_evidence_node(
         "read_regulatory_evidence",
         f"Reading regulatory evidence pages: {', '.join(str(page) for page in pages)}.",
     )
+    existing_contexts = read_regulatory_pages_evidence(
+        state["comparison_run_dir"],
+        state["current_sop_page"],
+        state["current_item_number"],
+    )
+    if existing_contexts is not None:
+        return {"regulatory_page_contexts": existing_contexts}
     contexts = read_regulatory_pages(state["regulatory_manifest"], pages)
     write_regulatory_pages_evidence(
         state["comparison_run_dir"],
@@ -437,6 +545,13 @@ def compress_regulatory_evidence_node(
     item = state["current_plan_item"]
     if item is None:
         return {"compressed_regulatory_evidence": []}
+    existing_evidence = read_compressed_evidence(
+        state["comparison_run_dir"],
+        state["current_sop_page"],
+        state["current_item_number"],
+    )
+    if existing_evidence is not None:
+        return {"compressed_regulatory_evidence": existing_evidence}
     _emit_event(
         state,
         "comparison",
@@ -444,7 +559,19 @@ def compress_regulatory_evidence_node(
         f"Compressing regulatory evidence for SOP page {state['current_sop_page']} item {state['current_item_number']}.",
     )
     evidence = [
-        state["client"].compress_regulatory_evidence(item, context)
+        _run_comparison_llm_call(
+            state,
+            "compress_regulatory_evidence",
+            (
+                f"Waiting for LLM response for regulatory page {context.page} "
+                f"compression on SOP page {state['current_sop_page']}"
+            ),
+            lambda attempt, exc, context=context: (
+                f"Retrying SOP page {state['current_sop_page']} evidence compression, "
+                f"attempt {attempt}: {type(exc).__name__}: {exc}"
+            ),
+            lambda context=context: state["client"].compress_regulatory_evidence(item, context),
+        )
         for context in state["regulatory_page_contexts"]
     ]
     write_compressed_evidence(
@@ -477,10 +604,22 @@ def execute_gap_analysis_node(
         )
     else:
         regulatory_evidence = _format_page_contexts(state["regulatory_page_contexts"])
-    finding = state["client"].execute_gap_analysis(
-        item,
-        regulatory_evidence,
-        state["comparison_memory_mode"],
+    finding = _run_comparison_llm_call(
+        state,
+        "analyze_gap_item",
+        (
+            f"Waiting for LLM response for gap item {state['current_item_number']} "
+            f"on SOP page {state['current_sop_page']}"
+        ),
+        lambda attempt, exc: (
+            f"Retrying gap item {state['current_item_number']} on SOP page "
+            f"{state['current_sop_page']}, attempt {attempt}: {type(exc).__name__}: {exc}"
+        ),
+        lambda: state["client"].execute_gap_analysis(
+            item,
+            regulatory_evidence,
+            state["comparison_memory_mode"],
+        ),
     )
     return {"current_gap_finding": finding}
 

@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from doc_processing.enrichment import (
     TableDescriptionRequest,
@@ -28,6 +29,18 @@ class FakeEnrichmentClient:
     def describe_formula(self, image_path: Path, formula_markdown: str) -> str:
         self.formula_requests.append((image_path, formula_markdown))
         return f"LaTeX: {formula_markdown.strip()}\nFormula description for {image_path.name}"
+
+
+class FlakyImageClient(FakeEnrichmentClient):
+    def __init__(self):
+        super().__init__()
+        self.image_attempts = 0
+
+    def describe_image(self, image_path: Path) -> str:
+        self.image_attempts += 1
+        if self.image_attempts == 1:
+            raise RuntimeError("Connection timeout")
+        return super().describe_image(image_path)
 
 
 class EnrichmentTests(unittest.TestCase):
@@ -228,6 +241,65 @@ class EnrichmentTests(unittest.TestCase):
             self.assertIn("![Table](table_images/table-1.png)", readable)
             self.assertIn("![Figure](image_png_images/picture-1.png)", readable)
             self.assertIn("![Formula](formula_images/formula-1.png)", readable)
+
+    def test_enrich_document_retries_transient_image_description_and_emits_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assets_dir = Path(temp_dir) / "sample_doc_assets" / "docling_assets"
+            pages_dir = assets_dir / "pages_md"
+            table_dir = assets_dir / "table_images"
+            picture_dir = assets_dir / "image_png_images"
+            formula_dir = assets_dir / "formula_images"
+            for folder in [pages_dir, table_dir, picture_dir, formula_dir]:
+                folder.mkdir(parents=True, exist_ok=True)
+
+            (picture_dir / "picture-1.png").write_bytes(b"picture")
+            (pages_dir / "page_0001.md").write_text(
+                "\n\n--- PAGE 1 ---\n\n[[DOCLING_IMAGE]]\n",
+                encoding="utf-8",
+            )
+            events = []
+            client = FlakyImageClient()
+
+            with patch("backend.services.retry_utils.time.sleep", return_value=None):
+                output = enrich_document(
+                    assets_dir,
+                    client=client,
+                    event_callback=lambda *args: events.append(args),
+                )
+
+            page_1 = (output.pages_md_dir / "page_0001.md").read_text(encoding="utf-8")
+
+        self.assertEqual(client.image_attempts, 2)
+        self.assertIn("Image description for picture-1.png", page_1)
+        self.assertTrue(any(event[1] == "waiting_for_llm" for event in events))
+        self.assertTrue(any(event[1] == "retry" for event in events))
+
+    def test_enrich_document_resume_skips_existing_enriched_page(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assets_dir = Path(temp_dir) / "sample_doc_assets" / "docling_assets"
+            pages_dir = assets_dir / "pages_md"
+            table_dir = assets_dir / "table_images"
+            picture_dir = assets_dir / "image_png_images"
+            formula_dir = assets_dir / "formula_images"
+            for folder in [pages_dir, table_dir, picture_dir, formula_dir]:
+                folder.mkdir(parents=True, exist_ok=True)
+
+            (pages_dir / "page_0001.md").write_text("--- PAGE 1 ---\nraw", encoding="utf-8")
+            enriched_page = assets_dir.parent / "enriched_doc" / "pages_md" / "page_0001.md"
+            enriched_page.parent.mkdir(parents=True)
+            enriched_page.write_text("--- PAGE 1 ---\nalready enriched", encoding="utf-8")
+
+            output = enrich_document(
+                assets_dir,
+                client=FakeEnrichmentClient(),
+                resume=True,
+            )
+
+            self.assertEqual(enriched_page.read_text(encoding="utf-8"), "--- PAGE 1 ---\nalready enriched")
+            self.assertIn(
+                "already enriched",
+                output.readable_markdown_file.read_text(encoding="utf-8"),
+            )
 
 
 if __name__ == "__main__":

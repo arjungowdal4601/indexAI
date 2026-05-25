@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks
 
 from backend.schemas import (
     ActiveComparisonResponse,
+    ComparisonListResponse,
     ComparisonProgressResponse,
     ComparisonStatusResponse,
     CreateComparisonRequest,
@@ -26,6 +27,11 @@ def create_comparison(
         sop_document_id=request.sop_document_id,
         background_tasks=background_tasks,
     )
+
+
+@router.get("", response_model=ComparisonListResponse)
+def list_comparisons() -> ComparisonListResponse:
+    return comparison_service.list_comparisons()
 
 
 @router.get("/by-pair/active", response_model=ActiveComparisonResponse)

@@ -223,6 +223,16 @@ def write_comparison_plan(
     return write_model_json(plan_path(comparison_run_dir, plan.sop_page), plan)
 
 
+def read_comparison_plan(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+) -> ComparisonPlan | None:
+    path = plan_path(comparison_run_dir, sop_page)
+    if not path.exists():
+        return None
+    return ComparisonPlan.model_validate_json(path.read_text(encoding="utf-8"))
+
+
 def write_regulatory_pages_evidence(
     comparison_run_dir: str | Path,
     sop_page: int,
@@ -246,6 +256,31 @@ def write_regulatory_pages_evidence(
     )
 
 
+def regulatory_pages_evidence_path(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+    item_number: int,
+) -> Path:
+    return (
+        Path(comparison_run_dir)
+        / "evidence"
+        / f"sop_page_{sop_page:04d}"
+        / f"regulatory_pages_item_{item_number:03d}.json"
+    )
+
+
+def read_regulatory_pages_evidence(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+    item_number: int,
+) -> list[PageContext] | None:
+    path = regulatory_pages_evidence_path(comparison_run_dir, sop_page, item_number)
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return [PageContext.model_validate(item) for item in payload]
+
+
 def write_compressed_evidence(
     comparison_run_dir: str | Path,
     sop_page: int,
@@ -259,6 +294,31 @@ def write_compressed_evidence(
         / f"compressed_evidence_item_{item_number:03d}.json",
         [item.model_dump(mode="json") for item in evidence],
     )
+
+
+def compressed_evidence_path(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+    item_number: int,
+) -> Path:
+    return (
+        Path(comparison_run_dir)
+        / "evidence"
+        / f"sop_page_{sop_page:04d}"
+        / f"compressed_evidence_item_{item_number:03d}.json"
+    )
+
+
+def read_compressed_evidence(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+    item_number: int,
+) -> list[RegulatoryEvidenceSummary] | None:
+    path = compressed_evidence_path(comparison_run_dir, sop_page, item_number)
+    if not path.exists():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return [RegulatoryEvidenceSummary.model_validate(item) for item in payload]
 
 
 def item_result_path(
@@ -282,6 +342,17 @@ def write_item_result(
         item_result_path(comparison_run_dir, finding.sop_page, item_number),
         finding,
     )
+
+
+def read_item_result(
+    comparison_run_dir: str | Path,
+    sop_page: int,
+    item_number: int,
+) -> GapFinding | None:
+    path = item_result_path(comparison_run_dir, sop_page, item_number)
+    if not path.exists():
+        return None
+    return GapFinding.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def page_result_path(comparison_run_dir: str | Path, sop_page: int) -> Path:

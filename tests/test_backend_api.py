@@ -19,7 +19,7 @@ def read_csv_rows(path: Path) -> list[dict]:
         return list(csv.DictReader(file))
 
 
-def fake_process_document(_pdf_path, output_root=None, event_callback=None):
+def fake_process_document(_pdf_path, output_root=None, event_callback=None, **_kwargs):
     root = Path(output_root)
     pages = root / "enriched_doc" / "pages_md"
     images = root / "docling_assets" / "page_images"
@@ -429,6 +429,31 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(calls, ["process", "index"])
 
+    def test_prepare_retry_resumes_failed_processing(self):
+        sop = self.upload_pdf("sop")
+        document = registry.get_document(sop["document_id"])
+        registry.upsert_document(
+            {
+                **document,
+                "processing_status": "failed",
+                "indexing_status": "not_started",
+                "ready_for_comparison": "false",
+                "error_message": "Connection timeout",
+            }
+        )
+
+        with patch(
+            "backend.services.processing_service.run_document_processing",
+            side_effect=fake_process_document,
+        ) as process_document, patch(
+            "backend.services.indexing_service.run_indexing_pipeline",
+            side_effect=fake_index_document,
+        ):
+            response = self.client.post(f"/documents/{sop['document_id']}/prepare")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(process_document.call_args.kwargs["resume"])
+
     def test_prepare_rejects_already_ready_document(self):
         sop = self.upload_pdf("sop")
         self.process_document(sop["document_id"])
@@ -545,6 +570,8 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(state["current_sop_page"], 4)
         error_trace = (run_dir / "logs" / "error_trace.txt").read_text(encoding="utf-8")
         self.assertIn("RuntimeError: Connection error.", error_trace)
+        self.assertIn("sop_page: 4", error_trace)
+        self.assertIn("stage: comparison", error_trace)
         self.assertIn("Traceback", error_trace)
 
     def test_create_comparison_reuses_active_comparison_for_same_pair(self):
@@ -785,6 +812,41 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(payload["progress_total"], 2)
         self.assertEqual(payload["progress_percent"], 1.0)
         self.assertTrue(payload["report_ready"])
+
+    def test_get_comparisons_returns_rows_with_filenames_and_report_ready(self):
+        regulatory = self.upload_pdf("regulatory", "regulatory.pdf")
+        sop = self.upload_pdf("sop", "procedure.pdf")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+
+        with patch(
+            "backend.services.comparison_service.run_document_comparison",
+            side_effect=fake_compare_documents,
+        ):
+            response = self.client.post(
+                "/comparisons",
+                json={
+                    "regulatory_document_id": regulatory["document_id"],
+                    "sop_document_id": sop["document_id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        comparison_id = response.json()["comparison_id"]
+
+        response = self.client.get("/comparisons")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(len(payload["comparisons"]), 1)
+        row = payload["comparisons"][0]
+        self.assertEqual(row["comparison_id"], comparison_id)
+        self.assertEqual(row["regulatory_filename"], "regulatory.pdf")
+        self.assertEqual(row["sop_filename"], "procedure.pdf")
+        self.assertEqual(row["status"], "completed")
+        self.assertTrue(row["report_ready"])
 
     def test_comparison_requires_both_documents_processed_and_indexed(self):
         regulatory = self.upload_pdf("regulatory")

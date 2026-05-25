@@ -33,7 +33,11 @@ def start_processing_job(document_id: str, background_tasks: BackgroundTasks) ->
     registry.upsert_document(
         {
             **document,
-            "processing_status": "queued",
+            "processing_status": (
+                document["processing_status"]
+                if document["processing_status"] == "failed"
+                else "queued"
+            ),
             "ready_for_comparison": "false",
             "active_job_id": job.job_id,
             "error_message": "",
@@ -91,6 +95,7 @@ def _event_callback(job_id: str) -> Callable[[str, str, str, int | None, int | N
 
 def run_processing_for_document(job_id: str, document_id: str) -> None:
     document = document_service.get_document_or_404(document_id)
+    resume = document.get("processing_status") == "failed"
     registry.upsert_document(
         {
             **document,
@@ -111,6 +116,8 @@ def run_processing_for_document(job_id: str, document_id: str) -> None:
         Path(document["stored_pdf_path"]),
         output_root=asset_root,
         event_callback=_event_callback(job_id),
+        resume=resume,
+        document_id=document_id,
     )
     job_event_service.append_event(
         job_id,

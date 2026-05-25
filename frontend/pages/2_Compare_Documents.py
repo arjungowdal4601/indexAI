@@ -8,11 +8,72 @@ from frontend import api_client
 from frontend.ui_components import (
     api_base_url_input,
     configure_page,
-    document_option,
     render_comparison_progress,
     ready_documents,
     run_api_call,
 )
+
+
+def _document_rows(documents: list[dict]) -> list[dict[str, str]]:
+    return [
+        {
+            "Document ID": document["document_id"],
+            "Filename": document["filename"],
+        }
+        for document in documents
+    ]
+
+
+def _selected_document(
+    title: str,
+    documents: list[dict],
+    state_key: str,
+    table_key: str,
+) -> dict | None:
+    st.subheader(title)
+    rows = _document_rows(documents)
+    valid_ids = {row["Document ID"] for row in rows}
+    if st.session_state.get(state_key) not in valid_ids:
+        st.session_state[state_key] = None
+
+    if not rows:
+        st.info("No ready documents.")
+        return None
+
+    try:
+        selection = st.dataframe(
+            rows,
+            hide_index=True,
+            width="stretch",
+            on_select="rerun",
+            selection_mode="single-row",
+            key=table_key,
+        )
+        selected_rows = []
+        selection_payload = getattr(selection, "selection", None)
+        if selection_payload is not None:
+            selected_rows = getattr(selection_payload, "rows", [])
+            if not selected_rows and isinstance(selection_payload, dict):
+                selected_rows = selection_payload.get("rows", [])
+        if selected_rows:
+            st.session_state[state_key] = rows[int(selected_rows[0])]["Document ID"]
+    except TypeError:
+        st.dataframe(rows, hide_index=True, width="stretch")
+        options = [row["Document ID"] for row in rows]
+        selected = st.radio(
+            f"{title} selection",
+            options,
+            format_func=lambda document_id: next(
+                row["Filename"] for row in rows if row["Document ID"] == document_id
+            ),
+            key=f"{table_key}-fallback",
+        )
+        st.session_state[state_key] = selected
+
+    selected_id = st.session_state.get(state_key)
+    if selected_id:
+        return next((document for document in documents if document["document_id"] == selected_id), None)
+    return None
 
 
 def main() -> None:
@@ -32,20 +93,18 @@ def main() -> None:
 
     left, right = st.columns(2)
     with left:
-        st.subheader("Regulatory")
-        selected_reg = st.selectbox(
-            "Ready regulatory document",
+        selected_reg = _selected_document(
+            "Regulatory Documents",
             regulatory_docs,
-            format_func=document_option,
-            placeholder="Select indexed regulatory document",
+            "selected_regulatory_document_id",
+            "regulatory-select-table",
         )
     with right:
-        st.subheader("SOP")
-        selected_sop = st.selectbox(
-            "Ready SOP document",
+        selected_sop = _selected_document(
+            "SOP Documents",
             sop_docs,
-            format_func=document_option,
-            placeholder="Select indexed SOP document",
+            "selected_sop_document_id",
+            "sop-select-table",
         )
 
     pair_state = None

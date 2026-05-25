@@ -130,16 +130,99 @@ def _report_markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _comparison_rows(comparisons: list[dict]) -> list[dict[str, str]]:
+    return [
+        {
+            "Comparison ID": item["comparison_id"],
+            "Regulatory Document": item.get("regulatory_filename") or item["regulatory_document_id"],
+            "SOP Document": item.get("sop_filename") or item["sop_document_id"],
+            "Status": item.get("status", ""),
+            "View": "View",
+        }
+        for item in comparisons
+    ]
+
+
+def _render_comparison_table(rows: list[dict[str, str]], key: str) -> None:
+    if not rows:
+        st.info("No comparison reports found.")
+        return
+    try:
+        selection = st.dataframe(
+            rows,
+            hide_index=True,
+            width="stretch",
+            on_select="rerun",
+            selection_mode="single-row",
+            key=key,
+        )
+        selection_payload = getattr(selection, "selection", None)
+        selected_rows = []
+        if selection_payload is not None:
+            selected_rows = getattr(selection_payload, "rows", [])
+            if not selected_rows and isinstance(selection_payload, dict):
+                selected_rows = selection_payload.get("rows", [])
+        if selected_rows:
+            st.session_state["selected_comparison_id"] = rows[int(selected_rows[0])]["Comparison ID"]
+    except TypeError:
+        header = st.columns([1.2, 2, 2, 1, 0.8])
+        header[0].markdown("**Comparison ID**")
+        header[1].markdown("**Regulatory Document**")
+        header[2].markdown("**SOP Document**")
+        header[3].markdown("**Status**")
+        header[4].markdown("**View**")
+        for row in rows:
+            cols = st.columns([1.2, 2, 2, 1, 0.8])
+            cols[0].write(row["Comparison ID"])
+            cols[1].write(row["Regulatory Document"])
+            cols[2].write(row["SOP Document"])
+            cols[3].write(row["Status"])
+            if cols[4].button("View", key=f"view-{row['Comparison ID']}"):
+                st.session_state["selected_comparison_id"] = row["Comparison ID"]
+                st.rerun()
+
+
+def _comparison_browser(base_url: str) -> str | None:
+    response = run_api_call(
+        "Load comparison reports",
+        lambda: api_client.list_comparisons(base_url),
+    )
+    comparisons = response.get("comparisons", []) if response else []
+    rows = _comparison_rows(comparisons)
+    selected_id = st.session_state.get("selected_comparison_id") or st.session_state.get(
+        "active_comparison_id"
+    )
+    valid_ids = {row["Comparison ID"] for row in rows}
+    if selected_id not in valid_ids:
+        selected_id = None
+        st.session_state["selected_comparison_id"] = None
+    else:
+        st.session_state["selected_comparison_id"] = selected_id
+
+    st.subheader("Comparison Reports")
+    if selected_id:
+        with st.expander("Comparison reports", expanded=False):
+            _render_comparison_table(rows, "comparison-report-browser-collapsed")
+        selected_row = next(row for row in rows if row["Comparison ID"] == selected_id)
+        st.caption(
+            f"Viewing {selected_row['Comparison ID']} - "
+            f"{selected_row['Regulatory Document']} vs {selected_row['SOP Document']}"
+        )
+    else:
+        _render_comparison_table(rows, "comparison-report-browser")
+        selected_id = st.session_state.get("selected_comparison_id")
+
+    if not selected_id:
+        st.info("Select a comparison report to view it.")
+    return selected_id
+
+
 def main() -> None:
     configure_page("Review Report")
     base_url = api_base_url_input()
 
-    comparison_id = st.text_input(
-        "Comparison ID",
-        value=st.session_state.get("active_comparison_id", ""),
-    )
+    comparison_id = _comparison_browser(base_url)
     if not comparison_id:
-        st.info("Enter a comparison ID after running a comparison.")
         return
 
     report = run_api_call(

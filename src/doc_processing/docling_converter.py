@@ -94,6 +94,10 @@ def recreate_docling_folders(output: DoclingOutput) -> None:
     if output.docling_assets_dir.exists():
         shutil.rmtree(output.docling_assets_dir)
 
+    ensure_docling_folders(output)
+
+
+def ensure_docling_folders(output: DoclingOutput) -> None:
     output.pages_md_dir.mkdir(parents=True, exist_ok=True)
     output.page_images_dir.mkdir(parents=True, exist_ok=True)
     output.picture_images_dir.mkdir(parents=True, exist_ok=True)
@@ -200,12 +204,35 @@ def collect_raw_assets_from_doc(
             image.save(file, "PNG")
 
 
+def _existing_asset_count(folder: Path, prefix: str) -> int:
+    count = 0
+    for path in folder.glob(f"{prefix}-*.png"):
+        try:
+            count = max(count, int(path.stem.rsplit("-", 1)[1]))
+        except ValueError:
+            continue
+    return count
+
+
+def _write_stitched_markdown(output: DoclingOutput, start_page: int, end_page: int) -> None:
+    parts = []
+    for page_no in range(start_page, end_page + 1):
+        page_file = output.pages_md_dir / f"page_{page_no:04d}.md"
+        if page_file.exists():
+            parts.append(page_file.read_text(encoding="utf-8").strip())
+    output.stitched_markdown_file.write_text(
+        "\n".join(part for part in parts if part).strip() + "\n",
+        encoding="utf-8",
+    )
+
+
 def convert_pdf_with_docling(
     pdf_path: str | Path,
     page_range: Optional[Tuple[int, int]] = None,
     images_scale: float = IMAGES_SCALE,
     output_root: str | Path | None = None,
     event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
+    resume: bool = False,
 ) -> DoclingOutput:
     """Convert a PDF into raw page-wise Docling markdown and raw assets."""
     pdf_path = Path(pdf_path).resolve()
@@ -213,7 +240,10 @@ def convert_pdf_with_docling(
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
     output = get_docling_output_paths(pdf_path, output_root=output_root)
-    recreate_docling_folders(output)
+    if resume:
+        ensure_docling_folders(output)
+    else:
+        recreate_docling_folders(output)
 
     if page_range is not None:
         start_page, end_page = page_range
@@ -223,8 +253,12 @@ def convert_pdf_with_docling(
     start_page = int(start_page)
     end_page = int(end_page)
 
-    converter = build_docling_converter(images_scale=images_scale)
-    counters = {"picture": 0, "table": 0, "formula": 0}
+    converter = None
+    counters = {
+        "picture": _existing_asset_count(output.picture_images_dir, "picture") if resume else 0,
+        "table": _existing_asset_count(output.table_images_dir, "table") if resume else 0,
+        "formula": _existing_asset_count(output.formula_images_dir, "formula") if resume else 0,
+    }
     stitched_parts = []
 
     print(f"Docling conversion started: {pdf_path.name}")
@@ -239,6 +273,7 @@ def convert_pdf_with_docling(
         )
 
     for page_no in range(start_page, end_page + 1):
+        page_file = output.pages_md_dir / f"page_{page_no:04d}.md"
         print(f"  - converting page {page_no}/{end_page}")
         if event_callback is not None:
             event_callback(
@@ -249,6 +284,13 @@ def convert_pdf_with_docling(
                 end_page,
             )
 
+        if resume and page_file.exists():
+            stitched_parts.append(page_file.read_text(encoding="utf-8").strip())
+            cleanup_memory()
+            continue
+
+        if converter is None:
+            converter = build_docling_converter(images_scale=images_scale)
         conversion_result = convert_pdf_page(converter, pdf_path, page_no)
         doc = conversion_result.document
 
@@ -258,16 +300,18 @@ def convert_pdf_with_docling(
         markdown = export_page_markdown(doc, page_no=page_no).strip()
         page_block = PAGE_SEPARATOR_TEMPLATE.format(page_no=page_no) + markdown + "\n"
 
-        page_file = output.pages_md_dir / f"page_{page_no:04d}.md"
         page_file.write_text(page_block, encoding="utf-8")
         stitched_parts.append(page_block)
 
         cleanup_memory()
 
-    output.stitched_markdown_file.write_text(
-        "\n".join(stitched_parts).strip() + "\n",
-        encoding="utf-8",
-    )
+    if stitched_parts:
+        output.stitched_markdown_file.write_text(
+            "\n".join(part.strip() for part in stitched_parts).strip() + "\n",
+            encoding="utf-8",
+        )
+    else:
+        _write_stitched_markdown(output, start_page, end_page)
 
     print("Docling conversion complete.")
     print(f"Docling assets: {output.docling_assets_dir}")

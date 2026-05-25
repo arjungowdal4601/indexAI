@@ -84,6 +84,39 @@ class DoclingConverterContractTests(unittest.TestCase):
             self.assertTrue(output.table_images_dir.exists())
             self.assertTrue(output.formula_images_dir.exists())
 
+    def test_resume_keeps_existing_page_outputs_and_skips_conversion(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "sample.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n")
+            asset_root = Path(temp_dir) / "sample_doc_assets" / "docling_assets"
+            pages_dir = asset_root / "pages_md"
+            page_images_dir = asset_root / "page_images"
+            pages_dir.mkdir(parents=True)
+            page_images_dir.mkdir(parents=True)
+            (pages_dir / "page_0001.md").write_text("--- PAGE 1 ---\nexisting", encoding="utf-8")
+            (page_images_dir / "page-1.png").write_bytes(b"image")
+
+            fake_converter = FakeConverter()
+            with patch(
+                "doc_processing.docling_converter.build_docling_converter",
+                return_value=fake_converter,
+            ):
+                output = convert_pdf_with_docling(
+                    pdf_path,
+                    page_range=(1, 1),
+                    resume=True,
+                )
+
+            self.assertEqual(fake_converter.page_ranges, [])
+            self.assertEqual(
+                (output.pages_md_dir / "page_0001.md").read_text(encoding="utf-8"),
+                "--- PAGE 1 ---\nexisting",
+            )
+            self.assertIn(
+                "existing",
+                output.stitched_markdown_file.read_text(encoding="utf-8"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

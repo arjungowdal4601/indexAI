@@ -173,6 +173,29 @@ def _safe_progress_value(value: object) -> float:
         return 0.0
 
 
+def _event_kind(event: dict[str, Any]) -> str:
+    text = f"{event.get('step', '')} {event.get('message', '')}".lower()
+    if "failed" in text:
+        return "failed"
+    if "retry" in text:
+        return "retry"
+    if "waiting_for_llm" in text or "waiting for llm" in text:
+        return "waiting_for_llm"
+    return "normal"
+
+
+def _friendly_event_message(event: dict[str, Any]) -> str:
+    message = event.get("message", "")
+    kind = _event_kind(event)
+    if kind == "waiting_for_llm":
+        return message or "Waiting for LLM response..."
+    if kind == "retry":
+        return message or "Retrying LLM call..."
+    if kind == "failed":
+        return message or "Failed."
+    return message
+
+
 @_fragment(run_every="2s")
 def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str | None) -> None:
     if not job_id and not document.get("ready_for_comparison"):
@@ -214,7 +237,17 @@ def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str
     colored_progress("Indexing", indexing_current, indexing_total, INDEXING_GREEN)
 
     if events:
-        st.caption(events[-1].get("message", ""))
+        latest = events[-1]
+        latest_message = _friendly_event_message(latest)
+        latest_kind = _event_kind(latest)
+        if latest_kind == "retry":
+            st.warning(latest_message)
+        elif latest_kind == "failed":
+            st.error(latest_message)
+        elif latest_kind == "waiting_for_llm":
+            st.info(latest_message)
+        else:
+            st.caption(latest_message)
     if job and job.get("status") == "failed":
         st.error(job.get("error_message") or "Prepare job failed.")
 
@@ -245,8 +278,16 @@ def render_comparison_progress(base_url: str, comparison_id: str | None) -> None
         st.markdown(f"Status: {status_badge(status)}", unsafe_allow_html=True)
 
         message = progress.get("message") or "Comparison status unavailable."
+        message_event = {"step": progress.get("current_step") or "", "message": message}
+        message_kind = _event_kind(message_event)
+        # Explicit strings kept here for contract checks: waiting_for_llm, retry, failed.
         if status in {"queued", "running"}:
-            st.info(message)
+            if message_kind == "retry":
+                st.warning(_friendly_event_message(message_event))
+            elif message_kind == "failed":
+                st.error(_friendly_event_message(message_event))
+            else:
+                st.info(_friendly_event_message(message_event))
             progress_percent = progress.get("progress_percent")
             current = progress.get("progress_current")
             total = progress.get("progress_total")
@@ -269,7 +310,7 @@ def render_comparison_progress(base_url: str, comparison_id: str | None) -> None
 
         with st.expander("Show comparison steps", expanded=False):
             for event in progress.get("events", [])[-25:]:
-                event_message = event.get("message", "")
+                event_message = _friendly_event_message(event)
                 current = event.get("progress_current")
                 total = event.get("progress_total")
                 if current is not None and total is not None:
