@@ -6,6 +6,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from backend.schemas import JobResponse
 from backend.services import (
+    artifact_retention_service,
     document_service,
     indexing_service,
     job_event_service,
@@ -85,6 +86,7 @@ def prepare_document_job(job_id: str, document_id: str) -> None:
             indexing_service.run_indexing_for_document(job_id, document_id)
 
         document = document_service.get_document_or_404(document_id)
+        artifact_retention_service.cleanup_document_artifacts(document_id)
         registry.upsert_document(
             {
                 **document,

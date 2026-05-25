@@ -155,6 +155,55 @@ The readable markdown keeps old-style relative image links such as `![Table](tab
 
 The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`. Each topic entry contains `topic`, `pages`, a rich evidence-focused `description`, and `assets` for target-page figures, tables, and formulas. Legacy `keywords` entries can still be loaded, but new index writes use `assets` instead.
 
+## Artifact Retention
+
+Backend artifact cleanup runs automatically after successful document indexing and
+successful comparison report generation. Configure the mode in `backend/config.py`:
+
+```python
+ARTIFACT_RETENTION_MODE = "standard"
+```
+
+Supported modes:
+
+```text
+debug     keep everything
+standard  default; keep product artifacts only
+minimal   keep only essential artifacts
+```
+
+In standard mode, prepared backend documents keep this final structure:
+
+```text
+storage/documents/<type>/<document_id>/
+|-- original/source.pdf
+|-- manifest.json
+|-- page_images/
+|-- enriched_doc/
+|   |-- pages_md/
+|   |-- image_png_images/
+|   |-- table_images/
+|   |-- formula_images/
+|   `-- readable_processed_doc.md
+`-- indexing_output/
+    `-- topic_index.json
+```
+
+In standard mode, completed comparisons keep this final structure:
+
+```text
+storage/comparisons/<comparison_id>/
+|-- comparison_request.json
+|-- page_reports/
+|-- final_report.json
+|-- final_report.md
+|-- final_report.csv
+|-- reports/executive_summary.md
+|-- state/
+|-- logs/
+`-- artifact_cleanup.json
+```
+
 ## Run Document Retrieval
 
 Run retrieval separately after enriched page Markdown and `topic_index.json` exist:

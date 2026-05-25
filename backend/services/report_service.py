@@ -26,7 +26,7 @@ def read_page_report(comparison_id: str, sop_page_number: int) -> dict:
         raise HTTPException(status_code=404, detail=f"SOP page report not found: {sop_page_number}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     sop = document_service.get_document_or_404(comparison["sop_document_id"])
-    image_path = Path(sop["asset_root"]) / "docling_assets" / "page_images" / f"page-{int(sop_page_number)}.png"
+    image_path = document_service.page_images_folder(sop) / f"page-{int(sop_page_number)}.png"
     payload["sop_page_image_url"] = (
         f"/assets/documents/{sop['document_id']}/page-image/{int(sop_page_number)}"
     )

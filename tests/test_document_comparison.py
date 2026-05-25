@@ -243,6 +243,27 @@ class DocumentComparisonStorageTests(unittest.TestCase):
                 root / "indexing_output" / "topic_index.json",
             )
 
+    def test_load_document_manifest_defaults_legacy_page_images_folder(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = make_document_root(
+                Path(temp_dir),
+                "sop",
+                "sop_v1",
+                total_pages=1,
+                manifest_name="manifest.json",
+            )
+            manifest_path = root / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.pop("page_images_folder")
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            loaded = load_document_manifest(root)
+
+            self.assertEqual(
+                loaded.page_images_folder,
+                root / "docling_assets" / "page_images",
+            )
+
     def test_load_topic_index_reads_assets_contract(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = make_document_root(

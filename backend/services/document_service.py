@@ -81,6 +81,26 @@ def manifest_path(document_row: dict[str, str]) -> Path:
     return Path(document_row["asset_root"]) / "manifest.json"
 
 
+def load_manifest(document_row: dict[str, str]) -> dict:
+    path = manifest_path(document_row)
+    if not path.exists():
+        raise FileNotFoundError(f"Manifest not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Manifest root must be an object: {path}")
+    return payload
+
+
+def page_images_folder(document_row: dict[str, str]) -> Path:
+    manifest = load_manifest(document_row)
+    folder = manifest.get("page_images_folder") or "docling_assets/page_images"
+    path = Path(document_row["asset_root"]) / folder
+    if path.exists():
+        return path
+    fallback = Path(document_row["asset_root"]) / "docling_assets" / "page_images"
+    return fallback
+
+
 def write_manifest(document_row: dict[str, str], total_pages: int, topic_index_path: str | None = None) -> Path:
     root = Path(document_row["asset_root"])
     payload = {

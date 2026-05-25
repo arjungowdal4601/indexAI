@@ -15,7 +15,13 @@ from backend.schemas import (
     ComparisonStatusResponse,
     CreateComparisonResponse,
 )
-from backend.services import document_service, job_event_service, job_service, registry
+from backend.services import (
+    artifact_retention_service,
+    document_service,
+    job_event_service,
+    job_service,
+    registry,
+)
 from document_comparison.graph import run_document_comparison
 
 ACTIVE_COMPARISON_STATUSES = {"queued", "running"}
@@ -211,6 +217,7 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
                 "error_message": "",
             }
         )
+        artifact_retention_service.cleanup_comparison_artifacts(comparison_id)
         job_event_service.append_event(
             job_id,
             stage="comparison",

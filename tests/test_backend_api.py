@@ -26,6 +26,28 @@ def fake_process_document(_pdf_path, output_root=None, event_callback=None):
     pages.mkdir(parents=True, exist_ok=True)
     images.mkdir(parents=True, exist_ok=True)
     (pages / "page_0001.md").write_text("--- PAGE 1 ---\nPrepared evidence.", encoding="utf-8")
+    (root / "enriched_doc" / "readable_processed_doc.md").write_text(
+        "--- PAGE 1 ---\nPrepared evidence.",
+        encoding="utf-8",
+    )
+    for folder_name in ["image_png_images", "table_images", "formula_images"]:
+        enriched_folder = root / "enriched_doc" / folder_name
+        enriched_folder.mkdir(parents=True, exist_ok=True)
+        (enriched_folder / "asset-1.png").write_bytes(b"asset")
+        raw_folder = root / "docling_assets" / folder_name
+        raw_folder.mkdir(parents=True, exist_ok=True)
+        (raw_folder / "asset-1.png").write_bytes(b"asset")
+    raw_pages = root / "docling_assets" / "pages_md"
+    raw_pages.mkdir(parents=True, exist_ok=True)
+    (raw_pages / "page_0001.md").write_text("--- PAGE 1 ---\nRaw evidence.", encoding="utf-8")
+    (root / "docling_assets" / "stitched_raw_docling_markdown.md").write_text(
+        "--- PAGE 1 ---\nRaw evidence.",
+        encoding="utf-8",
+    )
+    (root / "docling_assets" / "table_continuity_map.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
     (images / "page-1.png").write_bytes(
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
         b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"
@@ -52,6 +74,12 @@ def fake_index_document(pages_folder_path, output_folder_path, document_id, **_k
         ),
         encoding="utf-8",
     )
+    (output_folder / "processing_state.json").write_text("{}", encoding="utf-8")
+    (output_folder / "validation_report.json").write_text("{}", encoding="utf-8")
+    (output_folder / "revision_log.md").write_text("revision", encoding="utf-8")
+    backup_dir = output_folder / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    (backup_dir / "topic_index_before_step_0001.json").write_text("[]", encoding="utf-8")
     return SimpleNamespace(
         topic_index_path=topic_index_path,
         processing_state_path=output_folder / "processing_state.json",
@@ -73,6 +101,32 @@ def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, compar
     run_dir = Path(comparison_run_dir)
     page_reports = run_dir / "page_reports"
     page_reports.mkdir(parents=True, exist_ok=True)
+    for folder in [
+        "plans",
+        "item_results",
+        "traces",
+        "evidence/sop_page_0001",
+        "page_results",
+        "cache/regulatory_page_evidence",
+        "reports",
+        "state",
+        "logs",
+    ]:
+        (run_dir / folder).mkdir(parents=True, exist_ok=True)
+    (run_dir / "plans" / "sop_page_0001_plan.json").write_text("{}", encoding="utf-8")
+    (run_dir / "item_results" / "sop_page_0001_item_001.json").write_text("{}", encoding="utf-8")
+    (run_dir / "traces" / "sop_page_0001_trace.json").write_text("{}", encoding="utf-8")
+    (run_dir / "evidence" / "sop_page_0001" / "regulatory_pages_item_001.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (run_dir / "page_results" / "sop_page_0001.json").write_text("{}", encoding="utf-8")
+    (run_dir / "cache" / "regulatory_page_evidence" / "page_0001.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+    (run_dir / "state" / "comparison_state.json").write_text("{}", encoding="utf-8")
+    (run_dir / "logs" / "run_log.csv").write_text("log\n", encoding="utf-8")
     report_payload = {
         "comparison_id": comparison_run_id,
         "regulatory_document_id": Path(regulatory_root).name,
@@ -92,17 +146,21 @@ def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, compar
     final_report = run_dir / "final_report.json"
     final_markdown = run_dir / "final_report.md"
     final_csv = run_dir / "final_report.csv"
+    executive_summary = run_dir / "reports" / "executive_summary.md"
+    duplicate_gap_report = run_dir / "reports" / "gap_report.json"
     page_report = page_reports / "sop_page_0001.json"
     final_report.write_text(json.dumps(report_payload), encoding="utf-8")
     final_markdown.write_text("# Final Report\n", encoding="utf-8")
     final_csv.write_text("comparison_id,sop_page,status\n", encoding="utf-8")
+    executive_summary.write_text("# Executive Summary\n", encoding="utf-8")
+    duplicate_gap_report.write_text(json.dumps(report_payload), encoding="utf-8")
     page_report.write_text(json.dumps(report_payload["page_reports"][0]), encoding="utf-8")
     return SimpleNamespace(
         comparison_run_id=comparison_run_id,
         comparison_run_dir=run_dir,
         gap_report_path=final_report,
         markdown_report_path=final_markdown,
-        executive_summary_path=run_dir / "executive_summary.md",
+        executive_summary_path=executive_summary,
         page_result_paths=[page_report],
     )
 
@@ -306,6 +364,25 @@ class BackendApiTests(unittest.TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["topic_index_path"], "indexing_output/topic_index.json")
 
+    def test_indexing_cleanup_preserves_page_image_endpoint_and_copilot_inputs(self):
+        sop = self.upload_pdf("sop")
+        self.process_document(sop["document_id"])
+
+        self.index_document(sop["document_id"])
+
+        root = self.storage_root / "documents" / "sop" / sop["document_id"]
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["page_images_folder"], "page_images")
+        self.assertTrue((root / "page_images" / "page-1.png").exists())
+        self.assertFalse((root / "docling_assets").exists())
+        self.assertTrue((root / "enriched_doc" / "pages_md" / "page_0001.md").exists())
+        self.assertTrue((root / "indexing_output" / "topic_index.json").exists())
+
+        response = self.client.get(f"/assets/documents/{sop['document_id']}/page-image/1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "image/png")
+
     def test_prepare_endpoint_queues_prepare_document_job(self):
         sop = self.upload_pdf("sop")
 
@@ -413,6 +490,14 @@ class BackendApiTests(unittest.TestCase):
         self.assertTrue((comparison_root / "comparison_request.json").exists())
         self.assertTrue((comparison_root / "final_report.json").exists())
         self.assertTrue((comparison_root / "final_report.csv").exists())
+        self.assertTrue((comparison_root / "reports" / "executive_summary.md").exists())
+        self.assertTrue((comparison_root / "artifact_cleanup.json").exists())
+        self.assertFalse((comparison_root / "plans").exists())
+        self.assertFalse((comparison_root / "item_results").exists())
+        self.assertFalse((comparison_root / "traces").exists())
+        self.assertFalse((comparison_root / "evidence").exists())
+        self.assertFalse((comparison_root / "page_results").exists())
+        self.assertFalse((comparison_root / "cache").exists())
 
         status = self.client.get(f"/comparisons/{comparison_id}").json()
         self.assertEqual(status["status"], "completed")
@@ -427,6 +512,7 @@ class BackendApiTests(unittest.TestCase):
             page["sop_page_image_url"],
             f"/assets/documents/{sop['document_id']}/page-image/1",
         )
+        self.assertNotIn("image_warning", page)
 
     def test_comparison_failure_writes_error_trace_and_failed_state(self):
         regulatory = self.upload_pdf("regulatory")

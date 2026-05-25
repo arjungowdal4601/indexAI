@@ -8,7 +8,13 @@ from typing import Callable
 from fastapi import BackgroundTasks, HTTPException
 
 from backend.schemas import JobResponse
-from backend.services import document_service, job_event_service, job_service, registry
+from backend.services import (
+    artifact_retention_service,
+    document_service,
+    job_event_service,
+    job_service,
+    registry,
+)
 from document_indexing.main import run_indexing_pipeline
 
 
@@ -141,6 +147,7 @@ def run_indexing_for_document(job_id: str, document_id: str) -> None:
             "error_message": "",
         }
     )
+    artifact_retention_service.cleanup_document_artifacts(document_id)
     job_event_service.append_event(
         job_id,
         stage="document_indexing",

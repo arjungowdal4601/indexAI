@@ -78,7 +78,10 @@ def load_document_manifest(document_root: str | Path) -> DocumentManifest:
         root_path=root,
         source_file=_resolve_path(root, data["source_file"]),
         enriched_pages_folder=_resolve_path(root, data["enriched_pages_folder"]),
-        page_images_folder=_resolve_path(root, data["page_images_folder"]),
+        page_images_folder=_resolve_path(
+            root,
+            data.get("page_images_folder") or "docling_assets/page_images",
+        ),
         total_pages=int(data["total_pages"]),
         topic_index_path=_resolve_path(root, data.get("topic_index_path")),
     )
