@@ -96,6 +96,7 @@ class ArtifactRetentionTests(unittest.TestCase):
         write_file(root / "final_report.json", "{}")
         write_file(root / "final_report.md", "# Report\n")
         write_file(root / "final_report.csv", "header\n")
+        write_file(root / "thought_analysis_bundle.json", "{}")
         write_file(root / "reports" / "executive_summary.md", "# Summary\n")
         write_file(root / "reports" / "gap_report.json", "{}")
         write_file(root / "reports" / "gap_report.md", "# Duplicate\n")
@@ -164,6 +165,7 @@ class ArtifactRetentionTests(unittest.TestCase):
         self.assertTrue((root / "final_report.json").exists())
         self.assertTrue((root / "final_report.md").exists())
         self.assertTrue((root / "final_report.csv").exists())
+        self.assertTrue((root / "thought_analysis_bundle.json").exists())
         self.assertTrue((root / "reports" / "executive_summary.md").exists())
         self.assertTrue((root / "state" / "comparison_state.json").exists())
         self.assertTrue((root / "logs" / "run_log.csv").exists())
@@ -175,6 +177,8 @@ class ArtifactRetentionTests(unittest.TestCase):
         self.assertFalse((root / "page_results").exists())
         self.assertFalse((root / "cache").exists())
         self.assertFalse((root / "reports" / "gap_report.json").exists())
+        cleanup_metadata = json.loads((root / "artifact_cleanup.json").read_text(encoding="utf-8"))
+        self.assertIn("thought_analysis_bundle.json", cleanup_metadata["kept"])
 
     def test_minimal_comparison_cleanup_keeps_only_essential_outputs(self):
         root = self.create_comparison_artifacts()
@@ -185,12 +189,15 @@ class ArtifactRetentionTests(unittest.TestCase):
         self.assertTrue((root / "comparison_request.json").exists())
         self.assertTrue((root / "page_reports" / "sop_page_0001.json").exists())
         self.assertTrue((root / "final_report.json").exists())
+        self.assertTrue((root / "thought_analysis_bundle.json").exists())
         self.assertTrue((root / "state" / "comparison_state.json").exists())
         self.assertTrue((root / "logs" / "run_log.csv").exists())
         self.assertTrue((root / "artifact_cleanup.json").exists())
         self.assertFalse((root / "final_report.md").exists())
         self.assertFalse((root / "final_report.csv").exists())
         self.assertFalse((root / "reports" / "executive_summary.md").exists())
+        cleanup_metadata = json.loads((root / "artifact_cleanup.json").read_text(encoding="utf-8"))
+        self.assertIn("thought_analysis_bundle.json", cleanup_metadata["kept"])
 
 
 if __name__ == "__main__":

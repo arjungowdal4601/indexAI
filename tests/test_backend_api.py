@@ -19,6 +19,19 @@ def read_csv_rows(path: Path) -> list[dict]:
         return list(csv.DictReader(file))
 
 
+def has_hidden_chain_of_thought_key(value) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in {"chain_of_thought", "hidden_chain_of_thought"}:
+                return True
+            if has_hidden_chain_of_thought_key(item):
+                return True
+    elif isinstance(value, list):
+        return any(has_hidden_chain_of_thought_key(item) for item in value)
+    return False
+
+
 def fake_process_document(_pdf_path, output_root=None, event_callback=None, **_kwargs):
     root = Path(output_root)
     pages = root / "enriched_doc" / "pages_md"
@@ -139,7 +152,22 @@ def fake_compare_documents(regulatory_root, sop_root, comparison_run_dir, compar
                 "what_went_right": ["SOP evidence is present."],
                 "what_went_wrong": [],
                 "human_review_items": [],
-                "gap_items": [],
+                "gap_items": [
+                    {
+                        "sop_page": 1,
+                        "sop_topic": "Prepared evidence controls",
+                        "regulatory_topics": ["Prepared evidence controls"],
+                        "regulatory_pages_used": [1],
+                        "status": "compliant",
+                        "severity": "minor",
+                        "confidence": "high",
+                        "sop_evidence": "Prepared evidence.",
+                        "regulatory_evidence": "Regulatory evidence.",
+                        "gap_explanation": "The SOP covers the requirement.",
+                        "recommended_action": "No action required.",
+                        "missing_or_weak_elements": [],
+                    }
+                ],
             }
         ],
     }
@@ -847,6 +875,117 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(row["sop_filename"], "procedure.pdf")
         self.assertEqual(row["status"], "completed")
         self.assertTrue(row["report_ready"])
+
+    def test_completed_comparison_download_endpoints_return_csv_and_bundle(self):
+        regulatory = self.upload_pdf("regulatory", "regulatory.pdf")
+        sop = self.upload_pdf("sop", "procedure.pdf")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+
+        with patch(
+            "backend.services.comparison_service.run_document_comparison",
+            side_effect=fake_compare_documents,
+        ):
+            response = self.client.post(
+                "/comparisons",
+                json={
+                    "regulatory_document_id": regulatory["document_id"],
+                    "sop_document_id": sop["document_id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        comparison_id = response.json()["comparison_id"]
+
+        csv_response = self.client.get(f"/comparisons/{comparison_id}/downloads/csv")
+        self.assertEqual(csv_response.status_code, 200, csv_response.text)
+        self.assertIn("text/csv", csv_response.headers["content-type"])
+        self.assertIn("comparison_id", csv_response.text)
+
+        bundle_response = self.client.get(
+            f"/comparisons/{comparison_id}/downloads/thought-analysis-bundle"
+        )
+        self.assertEqual(bundle_response.status_code, 200, bundle_response.text)
+        self.assertIn("application/json", bundle_response.headers["content-type"])
+        bundle = bundle_response.json()
+        self.assertEqual(bundle["comparison_id"], comparison_id)
+        self.assertEqual(bundle["regulatory_filename"], "regulatory.pdf")
+        self.assertEqual(bundle["sop_filename"], "procedure.pdf")
+        self.assertIn("status_taxonomy", bundle)
+        self.assertIn("page_reports", bundle)
+        self.assertIn("final_findings", bundle)
+        self.assertIn("job_events", bundle)
+        self.assertIn("missing_debug_artifacts", bundle)
+        self.assertIn("hidden chain-of-thought is not included", bundle["safety_note"])
+        self.assertFalse(has_hidden_chain_of_thought_key(bundle))
+
+    def test_csv_download_regenerates_missing_csv_from_report(self):
+        regulatory = self.upload_pdf("regulatory")
+        sop = self.upload_pdf("sop")
+        self.process_document(regulatory["document_id"])
+        self.process_document(sop["document_id"])
+        self.index_document(regulatory["document_id"])
+        self.index_document(sop["document_id"])
+
+        with patch(
+            "backend.services.comparison_service.run_document_comparison",
+            side_effect=fake_compare_documents,
+        ):
+            response = self.client.post(
+                "/comparisons",
+                json={
+                    "regulatory_document_id": regulatory["document_id"],
+                    "sop_document_id": sop["document_id"],
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        comparison_id = response.json()["comparison_id"]
+        csv_path = self.storage_root / "comparisons" / comparison_id / "final_report.csv"
+        csv_path.unlink()
+
+        csv_response = self.client.get(f"/comparisons/{comparison_id}/downloads/csv")
+
+        self.assertEqual(csv_response.status_code, 200, csv_response.text)
+        self.assertTrue(csv_path.exists())
+        header = csv_response.text.splitlines()[0]
+        for column in [
+            "comparison_id",
+            "sop_page",
+            "page_status",
+            "status",
+            "severity",
+            "recommended_action",
+        ]:
+            self.assertIn(column, header)
+
+    def test_download_endpoints_reject_incomplete_comparison(self):
+        registry.upsert_comparison(
+            {
+                "comparison_id": "cmp_000001",
+                "regulatory_document_id": "reg_000001",
+                "sop_document_id": "sop_000001",
+                "status": "running",
+                "created_at": registry.utc_now(),
+                "started_at": registry.utc_now(),
+                "finished_at": "",
+                "report_json_path": "",
+                "report_md_path": "",
+                "error_message": "",
+            }
+        )
+
+        csv_response = self.client.get("/comparisons/cmp_000001/downloads/csv")
+        bundle_response = self.client.get(
+            "/comparisons/cmp_000001/downloads/thought-analysis-bundle"
+        )
+
+        self.assertEqual(csv_response.status_code, 400)
+        self.assertEqual(bundle_response.status_code, 400)
+        self.assertIn("not completed", csv_response.text.lower())
+        self.assertIn("not completed", bundle_response.text.lower())
 
     def test_comparison_requires_both_documents_processed_and_indexed(self):
         regulatory = self.upload_pdf("regulatory")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, BackgroundTasks
+from fastapi.responses import FileResponse
 
 from backend.schemas import (
     ActiveComparisonResponse,
@@ -42,6 +43,26 @@ def get_active_comparison(
     return comparison_service.get_active_comparison_for_pair(
         regulatory_document_id=regulatory_document_id,
         sop_document_id=sop_document_id,
+    )
+
+
+@router.get("/{comparison_id}/downloads/csv")
+def download_csv_report(comparison_id: str) -> FileResponse:
+    path = report_service.ensure_final_report_csv(comparison_id)
+    return FileResponse(
+        path,
+        media_type="text/csv",
+        filename=f"{comparison_id}_final_report.csv",
+    )
+
+
+@router.get("/{comparison_id}/downloads/thought-analysis-bundle")
+def download_thought_analysis_bundle(comparison_id: str) -> FileResponse:
+    path = report_service.ensure_thought_analysis_bundle(comparison_id)
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=f"{comparison_id}_thought_analysis_bundle.json",
     )
 
 

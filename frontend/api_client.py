@@ -67,6 +67,25 @@ def _request_json(
         raise ApiError(f"Could not reach backend at {url}: {exc.reason}") from exc
 
 
+def _request_bytes(
+    method: str,
+    path: str,
+    base_url: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    accept: str = "*/*",
+) -> bytes:
+    url = f"{get_api_base_url(base_url)}{path}"
+    request = Request(url, headers={"Accept": accept}, method=method)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise ApiError(f"Backend returned HTTP {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise ApiError(f"Could not reach backend at {url}: {exc.reason}") from exc
+
+
 def health(base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", "/health", base_url=base_url)
 
@@ -155,6 +174,27 @@ def get_comparison_progress(comparison_id: str, base_url: str | None = None) -> 
 
 def get_comparison_report(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", f"/comparisons/{comparison_id}/report", base_url=base_url)
+
+
+def download_comparison_csv(comparison_id: str, base_url: str | None = None) -> bytes:
+    return _request_bytes(
+        "GET",
+        f"/comparisons/{comparison_id}/downloads/csv",
+        base_url=base_url,
+        accept="text/csv",
+    )
+
+
+def download_thought_analysis_bundle(
+    comparison_id: str,
+    base_url: str | None = None,
+) -> bytes:
+    return _request_bytes(
+        "GET",
+        f"/comparisons/{comparison_id}/downloads/thought-analysis-bundle",
+        base_url=base_url,
+        accept="application/json",
+    )
 
 
 def get_page_report(

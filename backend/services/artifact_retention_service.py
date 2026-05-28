@@ -50,6 +50,8 @@ COMPARISON_MINIMAL_DELETE_PATHS = [
     "reports",
 ]
 
+THOUGHT_ANALYSIS_BUNDLE_FILE = "thought_analysis_bundle.json"
+
 
 def _relative_path(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
@@ -170,6 +172,7 @@ def cleanup_comparison_artifacts(comparison_id: str) -> dict:
         "deleted": sorted(set(deleted)),
     }
     _write_json(root / "artifact_cleanup.json", payload)
+    _update_analysis_bundle_cleanup_metadata(root, payload)
     return payload
 
 
@@ -179,6 +182,7 @@ def _comparison_kept_paths(root: Path, mode: str) -> list[str]:
             "comparison_request.json",
             "page_reports",
             "final_report.json",
+            THOUGHT_ANALYSIS_BUNDLE_FILE,
             "state",
             "logs",
             "artifact_cleanup.json",
@@ -190,9 +194,29 @@ def _comparison_kept_paths(root: Path, mode: str) -> list[str]:
             "final_report.json",
             "final_report.md",
             "final_report.csv",
+            THOUGHT_ANALYSIS_BUNDLE_FILE,
             "reports/executive_summary.md",
             "state",
             "logs",
             "artifact_cleanup.json",
         ]
     return [path for path in candidates if (root / path).exists() or path == "artifact_cleanup.json"]
+
+
+def _update_analysis_bundle_cleanup_metadata(root: Path, cleanup_payload: dict) -> None:
+    bundle_path = root / THOUGHT_ANALYSIS_BUNDLE_FILE
+    if not bundle_path.exists():
+        return
+    try:
+        payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+    if not isinstance(payload, dict):
+        return
+    payload["artifact_cleanup"] = cleanup_payload
+    missing = payload.get("missing_debug_artifacts")
+    if isinstance(missing, list):
+        payload["missing_debug_artifacts"] = [
+            item for item in missing if item != "artifact_cleanup.json"
+        ]
+    _write_json(bundle_path, payload)

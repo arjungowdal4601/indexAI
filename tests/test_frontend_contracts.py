@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import tempfile
 import unittest
@@ -19,6 +20,21 @@ class FakeHttpResponse:
 
     def read(self) -> bytes:
         return json.dumps(self.payload).encode("utf-8")
+
+
+class FakeBytesResponse:
+    def __init__(self, payload: bytes, status: int = 200):
+        self.payload = payload
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self) -> bytes:
+        return self.payload
 
 
 class FrontendApiClientTests(unittest.TestCase):
@@ -250,8 +266,50 @@ class FrontendApiClientTests(unittest.TestCase):
         self.assertEqual(captured["url"], "http://api.local/comparisons")
         self.assertEqual(captured["method"], "GET")
 
+    def test_report_download_helpers_call_download_endpoints(self):
+        from frontend import api_client
+
+        captured = []
+
+        def fake_urlopen(request, timeout):
+            captured.append(
+                {
+                    "url": request.full_url,
+                    "method": request.get_method(),
+                    "timeout": timeout,
+                    "accept": request.headers.get("Accept"),
+                }
+            )
+            return FakeBytesResponse(b"download-bytes")
+
+        with patch.dict(
+            os.environ,
+            {"DOC_COMPARING_API_BASE_URL": "http://api.local"},
+        ), patch("frontend.api_client.urlopen", side_effect=fake_urlopen):
+            csv_payload = api_client.download_comparison_csv("cmp_000001")
+            bundle_payload = api_client.download_thought_analysis_bundle("cmp_000001")
+
+        self.assertEqual(csv_payload, b"download-bytes")
+        self.assertEqual(bundle_payload, b"download-bytes")
+        self.assertEqual(
+            [item["url"] for item in captured],
+            [
+                "http://api.local/comparisons/cmp_000001/downloads/csv",
+                "http://api.local/comparisons/cmp_000001/downloads/thought-analysis-bundle",
+            ],
+        )
+        self.assertEqual([item["method"] for item in captured], ["GET", "GET"])
+
 
 class FrontendContractTests(unittest.TestCase):
+    def _load_review_report_module(self):
+        path = Path("frontend/pages/3_Review_Report.py")
+        spec = importlib.util.spec_from_file_location("review_report_page", path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        return module
+
     def test_streamlit_frontend_files_exist(self):
         expected = [
             "frontend/streamlit_app.py",
@@ -318,6 +376,80 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("selected_comparison_id", source)
         self.assertIn("View", source)
         self.assertNotIn("st.text_input", source)
+
+    def test_review_report_uses_simplified_reviewer_controls(self):
+        source = Path("frontend/pages/3_Review_Report.py").read_text(encoding="utf-8")
+
+        self.assertIn("inject_review_report_styles", source)
+        self.assertIn("_render_review_header", source)
+        self.assertIn("_render_status_guide", source)
+        self.assertIn("_render_status_filters", source)
+        self.assertIn("_render_page_navigation", source)
+        self.assertIn("_status_badge_html", source)
+        self.assertIn("_render_image_panel", source)
+        self.assertIn("_render_analysis_panel", source)
+        self.assertIn("_render_finding_card", source)
+        self.assertIn("st.columns([5, 7]", source)
+        self.assertIn("vertical_alignment=\"top\"", source)
+        self.assertIn("gap=\"large\"", source)
+        self.assertIn("container(border=True)", source)
+        self.assertIn("Status guide", source)
+        self.assertIn("Filter by status", source)
+        self.assertIn("Compliant — SOP covers the requirement.", source)
+        self.assertIn("Partial — SOP covers it, but some controls/evidence are missing.", source)
+        self.assertIn("Missing — SOP does not cover the requirement.", source)
+        self.assertIn(
+            "Conflicting — SOP says something that conflicts with the regulatory expectation.",
+            source,
+        )
+        self.assertIn("Needs review — evidence is unclear; human reviewer should decide.", source)
+        self.assertIn(
+            "Not applicable — page/content is not relevant to GMP comparison.",
+            source,
+        )
+        self.assertIn("st.checkbox", source)
+        self.assertIn("st.number_input", source)
+        self.assertIn("selected_sop_page_", source)
+        self.assertIn("Previous", source)
+        self.assertIn("Next", source)
+        self.assertIn("No findings match the selected status filter on this page.", source)
+        self.assertIn("Download CSV report", source)
+        self.assertIn("Download Thought Analysis Bundle", source)
+        self.assertIn("download_comparison_csv", source)
+        self.assertIn("download_thought_analysis_bundle", source)
+        self.assertNotIn("Page range", source)
+        self.assertNotIn("Jump to page", source)
+        self.assertNotIn("st.slider", source)
+        self.assertNotIn("st.selectbox", source)
+        self.assertNotIn("Severity filter", source)
+        self.assertNotIn("Human-review only", source)
+        self.assertNotIn("selected_severity", source)
+        self.assertNotIn("human_only", source)
+        self.assertNotIn("st.json(summary)", source)
+        self.assertNotIn("render_status(", source)
+        self.assertNotIn("Download report JSON", source)
+        self.assertNotIn("Download report Markdown", source)
+        self.assertNotIn("_report_markdown", source)
+
+    def test_review_report_status_helpers_render_readable_labels(self):
+        review_report = self._load_review_report_module()
+
+        self.assertEqual(review_report._status_label("partially_compliant"), "Partial")
+        self.assertEqual(review_report._status_label("major_gaps"), "Missing")
+        self.assertEqual(review_report._status_label("needs_human_review"), "Needs review")
+        badge = review_report._status_badge_html("partially_compliant")
+        self.assertIn("Partial", badge)
+        self.assertNotIn("partially_compliant", badge)
+
+    def test_review_report_navigation_does_not_mutate_widget_key_after_input(self):
+        source = Path("frontend/pages/3_Review_Report.py").read_text(encoding="utf-8")
+        function_source = source.split("def _render_page_navigation", 1)[1].split(
+            "def _filter_page_findings",
+            1,
+        )[0]
+        after_input = function_source.split("st.number_input", 1)[1]
+
+        self.assertNotIn("st.session_state[state_key] =", after_input)
 
     def test_comparison_progress_uses_status_container_without_job_id(self):
         source = Path("frontend/ui_components.py").read_text(encoding="utf-8")

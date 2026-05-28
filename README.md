@@ -198,11 +198,16 @@ storage/comparisons/<comparison_id>/
 |-- final_report.json
 |-- final_report.md
 |-- final_report.csv
+|-- thought_analysis_bundle.json
 |-- reports/executive_summary.md
 |-- state/
 |-- logs/
 `-- artifact_cleanup.json
 ```
+
+Reviewer downloads are exposed as CSV plus the Thought Analysis Bundle. The bundle
+uses the canonical filename `thought_analysis_bundle.json` and contains observable
+comparison artifacts only; it does not include hidden chain-of-thought.
 
 ## Run Document Retrieval
 

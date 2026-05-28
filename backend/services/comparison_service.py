@@ -242,6 +242,9 @@ def compare_documents_job(job_id: str, comparison_id: str) -> None:
                 "error_message": "",
             }
         )
+        from backend.services import report_service
+
+        report_service.ensure_thought_analysis_bundle(comparison_id)
         artifact_retention_service.cleanup_comparison_artifacts(comparison_id)
         job_event_service.append_event(
             job_id,
