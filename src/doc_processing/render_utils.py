@@ -26,7 +26,9 @@ FORMULA_BLOCK_PATTERN = re.compile(
 def build_visual_markdown_block(label: str, image_path: Path, description: str) -> str:
     description = description.strip()
     relative_path = f"{image_path.parent.name}/{image_path.name}".replace("\\", "/")
-    return f"![{label}]({relative_path})\n\n{description}".strip()
+    asset_id = image_path.stem
+    inner_block = f"![{label}]({relative_path})\n\n{description}".strip()
+    return f"[ASSET {asset_id} START]\n\n{inner_block}\n\n[ASSET {asset_id} END]"
 
 
 def _asset_image_path(docling_assets_dir: Path, asset: dict) -> Path:
@@ -505,4 +507,3 @@ def replace_formula_blocks(
         return build_visual_markdown_block("Formula", formula_path, description)
 
     return FORMULA_BLOCK_PATTERN.sub(replace_match, markdown)
-

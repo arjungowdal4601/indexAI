@@ -239,6 +239,7 @@ class DoclingConverterContractTests(unittest.TestCase):
                 self.assertNotIn("location_hint", asset)
                 self.assertNotIn("line_start", asset)
                 self.assertNotIn("line_end", asset)
+                self.assertNotIn("ASSET", json.dumps(asset))
 
     def test_resume_reconverts_existing_page_when_registry_entry_is_missing(self):
         with tempfile.TemporaryDirectory() as temp_dir:

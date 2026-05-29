@@ -72,6 +72,16 @@ def registry_asset(kind: str, path: str, page: int, local_index: int, global_ind
     }
 
 
+def assert_asset_block(test_case: unittest.TestCase, text: str, asset_id: str, image_markdown: str) -> None:
+    start = f"[ASSET {asset_id} START]"
+    end = f"[ASSET {asset_id} END]"
+    test_case.assertIn(start, text)
+    test_case.assertIn(image_markdown, text)
+    test_case.assertIn(end, text)
+    test_case.assertLess(text.index(start), text.index(image_markdown))
+    test_case.assertLess(text.index(image_markdown), text.index(end))
+
+
 class EnrichmentTests(unittest.TestCase):
     def test_enrich_document_appends_unresolved_picture_without_crashing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -103,7 +113,7 @@ class EnrichmentTests(unittest.TestCase):
 
             self.assertIn("Status: PARTIAL_AUTOMATION_VERIFY_REQUIRED", readable)
             self.assertIn("## Unresolved Assets (Page 1)", readable)
-            self.assertIn("![Figure](image_png_images/picture-1.png)", readable)
+            assert_asset_block(self, readable, "picture-1", "![Figure](image_png_images/picture-1.png)")
             self.assertIn("reason: unmatched_picture_placeholder", readable)
 
     def test_enrich_document_appends_unresolved_table_without_crashing(self):
@@ -135,7 +145,7 @@ class EnrichmentTests(unittest.TestCase):
             readable = output.readable_markdown_file.read_text(encoding="utf-8")
 
             self.assertIn("Status: PARTIAL_AUTOMATION_VERIFY_REQUIRED", readable)
-            self.assertIn("![Table](table_images/table-1.png)", readable)
+            assert_asset_block(self, readable, "table-1", "![Table](table_images/table-1.png)")
             self.assertIn("reason: unmatched_table_block", readable)
 
     def test_enrich_document_appends_unresolved_formula_without_crashing(self):
@@ -167,7 +177,7 @@ class EnrichmentTests(unittest.TestCase):
             readable = output.readable_markdown_file.read_text(encoding="utf-8")
 
             self.assertIn("Status: PARTIAL_AUTOMATION_VERIFY_REQUIRED", readable)
-            self.assertIn("![Formula](formula_images/formula-1.png)", readable)
+            assert_asset_block(self, readable, "formula-1", "![Formula](formula_images/formula-1.png)")
             self.assertIn("reason: unmatched_formula_block", readable)
 
     def test_replaces_image_placeholders_in_asset_order(self):
@@ -184,7 +194,7 @@ class EnrichmentTests(unittest.TestCase):
                 client=client,
             )
 
-            self.assertIn("![Figure](image_png_images/picture-1.png)", rendered)
+            assert_asset_block(self, rendered, "picture-1", "![Figure](image_png_images/picture-1.png)")
             self.assertIn("Image description for picture-1.png", rendered)
             self.assertNotIn("[[DOCLING_IMAGE]]", rendered)
             self.assertEqual(client.image_paths, [image_path])
@@ -203,7 +213,7 @@ class EnrichmentTests(unittest.TestCase):
                 client=client,
             )
 
-            self.assertIn("![Formula](formula_images/formula-1.png)", rendered)
+            assert_asset_block(self, rendered, "formula-1", "![Formula](formula_images/formula-1.png)")
             self.assertIn("LaTeX: $$E = mc^2$$", rendered)
             self.assertNotIn("$$E = mc^2$$\nAfter", rendered)
             self.assertEqual(client.formula_requests[0][0], formula_path)
@@ -259,10 +269,10 @@ class EnrichmentTests(unittest.TestCase):
             page_2 = (output.pages_md_dir / "page_0002.md").read_text(encoding="utf-8")
             readable = output.readable_markdown_file.read_text(encoding="utf-8")
 
-            self.assertIn("![Table](table_images/table-1.png)", page_1)
-            self.assertIn("![Table](table_images/table-2.png)", page_2)
-            self.assertIn("![Table](table_images/table-1.png)", readable)
-            self.assertIn("![Table](table_images/table-2.png)", readable)
+            assert_asset_block(self, page_1, "table-1", "![Table](table_images/table-1.png)")
+            assert_asset_block(self, page_2, "table-2", "![Table](table_images/table-2.png)")
+            assert_asset_block(self, readable, "table-1", "![Table](table_images/table-1.png)")
+            assert_asset_block(self, readable, "table-2", "![Table](table_images/table-2.png)")
             self.assertIn("- table table_001 page 1", page_1)
             self.assertIn("- table table_002 page 2", page_2)
             self.assertNotIn("| Col A | Col B |", page_1)
@@ -318,9 +328,9 @@ class EnrichmentTests(unittest.TestCase):
             )
 
             readable = output.readable_markdown_file.read_text(encoding="utf-8")
-            self.assertIn("![Table](table_images/table-1.png)", readable)
-            self.assertIn("![Figure](image_png_images/picture-1.png)", readable)
-            self.assertIn("![Formula](formula_images/formula-1.png)", readable)
+            assert_asset_block(self, readable, "table-1", "![Table](table_images/table-1.png)")
+            assert_asset_block(self, readable, "picture-1", "![Figure](image_png_images/picture-1.png)")
+            assert_asset_block(self, readable, "formula-1", "![Formula](formula_images/formula-1.png)")
 
     def test_enrich_document_retries_transient_image_description_and_emits_events(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -455,17 +465,17 @@ class EnrichmentTests(unittest.TestCase):
             page_3 = (output.pages_md_dir / "page_0003.md").read_text(encoding="utf-8")
             readable = output.readable_markdown_file.read_text(encoding="utf-8")
 
-        self.assertIn("![Table](table_images/table-1.png)", page_2)
-        self.assertIn("![Formula](formula_images/formula-1.png)", page_2)
-        self.assertIn("![Table](table_images/table-2.png)", page_2)
-        self.assertIn("![Formula](formula_images/formula-2.png)", page_2)
+        assert_asset_block(self, page_2, "table-1", "![Table](table_images/table-1.png)")
+        assert_asset_block(self, page_2, "formula-1", "![Formula](formula_images/formula-1.png)")
+        assert_asset_block(self, page_2, "table-2", "![Table](table_images/table-2.png)")
+        assert_asset_block(self, page_2, "formula-2", "![Formula](formula_images/formula-2.png)")
         self.assertIn("Status: PARTIAL_AUTOMATION_VERIFY_REQUIRED", page_2)
         self.assertIn("reason: unmatched_table_block", page_2)
         self.assertIn("reason: unmatched_formula_block", page_2)
         self.assertNotIn("table_images/table-3.png", page_2)
         self.assertNotIn("formula_images/formula-3.png", page_2)
-        self.assertIn("![Table](table_images/table-3.png)", page_3)
-        self.assertIn("![Formula](formula_images/formula-3.png)", page_3)
+        assert_asset_block(self, page_3, "table-3", "![Table](table_images/table-3.png)")
+        assert_asset_block(self, page_3, "formula-3", "![Formula](formula_images/formula-3.png)")
         self.assertIn("## Unresolved Assets (Page 2)", readable)
         self.assertEqual([request.current_image_path.name for request in client.table_requests], ["table-1.png", "table-2.png", "table-3.png"])
         self.assertEqual([path.name for path, _markdown in client.formula_requests], ["formula-1.png", "formula-2.png", "formula-3.png"])
