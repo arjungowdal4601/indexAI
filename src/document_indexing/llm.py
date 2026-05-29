@@ -31,7 +31,6 @@ class TopicIndexingClient(Protocol):
         target_page_assets: list[TopicAsset],
         previous_page_topics: list[TopicEntry],
         next_page: PageMarkdown | None,
-        existing_topics: list[TopicEntry],
     ) -> list[TopicCandidateDraft]:
         ...
 
@@ -46,36 +45,56 @@ class TopicIndexingClient(Protocol):
         ...
 
 
-def format_page(page: PageMarkdown | None) -> str:
-    if page is None:
-        return "None."
-    return f"PAGE {page.page}\n{page.markdown.strip()}"
-
-
-def summarize_assets(assets: list[TopicAsset]) -> str:
-    if not assets:
-        return "No target-page assets."
-    return json.dumps(
-        [asset.model_dump(mode="json") for asset in assets],
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
-def summarize_topics(topics: list[TopicEntry]) -> str:
-    if not topics:
-        return "No existing topics."
-    summary = []
-    for topic in topics:
-        summary.append(
+def build_extraction_payload(
+    *,
+    target_page: PageMarkdown,
+    target_page_assets: list[TopicAsset],
+    previous_page_topics: list[TopicEntry],
+    next_page: PageMarkdown | None,
+) -> str:
+    payload = {
+        "previous_page_topics": [
             {
                 "topic": topic.topic,
-                "pages": topic.pages,
                 "description": topic.description,
-                "assets": [asset.model_dump(mode="json") for asset in topic.assets],
             }
-        )
-    return json.dumps(summary, ensure_ascii=False, indent=2)
+            for topic in previous_page_topics
+        ],
+        "target_page_markdown": target_page.markdown.strip(),
+        "target_page_assets": [
+            asset.model_dump(mode="json") for asset in target_page_assets
+        ],
+        "next_page_markdown": next_page.markdown.strip()
+        if next_page is not None
+        else None,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def build_matching_payload(
+    *,
+    candidates: list[TopicCandidate],
+    existing_topics: list[TopicEntry],
+) -> str:
+    payload = {
+        "candidates": [
+            {
+                "slot": slot,
+                "topic": candidate.topic,
+                "description": candidate.description,
+            }
+            for slot, candidate in enumerate(candidates)
+        ],
+        "existing_topics": [
+            {
+                "slot": slot,
+                "topic": topic.topic,
+                "description": topic.description,
+            }
+            for slot, topic in enumerate(existing_topics)
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 class LangChainTopicIndexingClient:
@@ -126,20 +145,15 @@ class LangChainTopicIndexingClient:
         target_page_assets: list[TopicAsset],
         previous_page_topics: list[TopicEntry],
         next_page: PageMarkdown | None,
-        existing_topics: list[TopicEntry],
     ) -> list[TopicCandidateDraft]:
         response = self.candidate_chain.invoke(
             {
-                "existing_topic_summary": summarize_topics(existing_topics),
-                "previous_page_number": target_page.page - 1
-                if target_page.page > 1
-                else "None",
-                "previous_page_indexed_topics": summarize_topics(previous_page_topics),
-                "target_page_number": target_page.page,
-                "target_page_markdown": target_page.markdown.strip(),
-                "target_page_assets": summarize_assets(target_page_assets),
-                "next_page_number": next_page.page if next_page is not None else "None",
-                "next_page_markdown": format_page(next_page),
+                "payload": build_extraction_payload(
+                    target_page=target_page,
+                    target_page_assets=target_page_assets,
+                    previous_page_topics=previous_page_topics,
+                    next_page=next_page,
+                ),
             }
         )
         return list(response.candidates)
@@ -151,11 +165,9 @@ class LangChainTopicIndexingClient:
     ) -> list[TopicMatchDecision]:
         response = self.match_chain.invoke(
             {
-                "current_index": summarize_topics(current_index),
-                "candidates": json.dumps(
-                    [candidate.model_dump(mode="json") for candidate in candidates],
-                    ensure_ascii=False,
-                    indent=2,
+                "payload": build_matching_payload(
+                    candidates=candidates,
+                    existing_topics=current_index,
                 ),
             }
         )
@@ -169,7 +181,7 @@ class LangChainTopicIndexingClient:
                     ensure_ascii=False,
                     indent=2,
                 ),
-                "candidate_topic": json.dumps(
+                "new_candidate": json.dumps(
                     candidate.model_dump(mode="json"),
                     ensure_ascii=False,
                     indent=2,

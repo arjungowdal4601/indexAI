@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,9 +44,9 @@ class TopicCandidateList(StrictModel):
 
 
 class TopicMatchDecision(StrictModel):
-    candidate_topic: str = Field(min_length=1)
-    decision: Literal["add_new", "update_existing"]
-    matched_topic: Optional[str] = None
+    candidate_batch_slot: int = Field(ge=0)
+    decision: Literal["no_match", "update_existing"]
+    matched_batch_slot: int | None = Field(default=None, ge=0)
     reason: str = ""
 
 

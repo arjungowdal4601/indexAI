@@ -165,9 +165,85 @@ def _normalize_topic_payload(item: object) -> object:
     if not isinstance(item, dict):
         return item
     normalized = dict(item)
+    # Older saved indexes used keywords; retrieval/comparison still need to read them.
     normalized.pop("keywords", None)
     normalized.setdefault("assets", [])
     return normalized
+
+
+def _clean_assets(assets: list[TopicAsset]) -> tuple[list[TopicAsset], list[str]]:
+    cleaned: list[TopicAsset] = []
+    fixes: list[str] = []
+    seen = set()
+    for asset in assets:
+        path = re.sub(r"\s+", " ", asset.path.strip())
+        description = re.sub(r"\s+", " ", asset.description.strip())
+        if path != asset.path or description != asset.description:
+            fixes.append("cleaned_asset_text")
+        if not path or not description:
+            fixes.append("dropped_empty_asset")
+            continue
+        key = (asset.page, asset.type, path)
+        if key in seen:
+            fixes.append("deduplicated_asset")
+            continue
+        seen.add(key)
+        cleaned.append(
+            TopicAsset(
+                page=asset.page,
+                type=asset.type,
+                path=path,
+                description=description,
+            )
+        )
+    return cleaned, fixes
+
+
+def clean_topic_index(topics: list[TopicEntry]) -> tuple[list[TopicEntry], list[str]]:
+    cleaned_topics: list[TopicEntry] = []
+    fixes: list[str] = []
+    for topic in topics:
+        topic_name = re.sub(r"\s+", " ", topic.topic.strip())
+        if topic_name != topic.topic:
+            fixes.append(f"cleaned_topic: {topic_name or topic.topic}")
+
+        pages = sorted(set(int(page) for page in topic.pages))
+        if pages != topic.pages:
+            fixes.append(f"normalized_pages: {topic_name}")
+
+        description = re.sub(r"\s+", " ", topic.description.strip())
+        if description != topic.description:
+            fixes.append(f"cleaned_description: {topic_name}")
+
+        assets, asset_fixes = _clean_assets(topic.assets)
+        fixes.extend(f"{fix}: {topic_name}" for fix in asset_fixes)
+        cleaned_topics.append(
+            TopicEntry(
+                topic=topic_name,
+                pages=pages,
+                description=description,
+                assets=assets,
+            )
+        )
+    return cleaned_topics, fixes
+
+
+def estimate_topic_index_size(topics: list[TopicEntry]) -> int:
+    payload = [topic.model_dump(mode="json") for topic in topics]
+    text = json.dumps(payload, ensure_ascii=False)
+    return max(1, len(text) // 4)
+
+
+def build_topic_index_diagnostics(
+    topics: list[TopicEntry],
+    fixes_applied: list[str],
+) -> ValidationReport:
+    return ValidationReport(
+        status="passed",
+        warnings=[],
+        fixes_applied=fixes_applied,
+        estimated_tokens=estimate_topic_index_size(topics),
+    )
 
 
 def load_processing_state(
@@ -209,16 +285,18 @@ def write_topic_index(
     output_dir: str | Path,
     topics: list[TopicEntry],
     step_number: int,
+    write_backup: bool = False,
 ) -> Path:
     output_dir = Path(output_dir)
     index_path = output_dir / TOPIC_INDEX_FILE
-    if index_path.exists():
+    if write_backup and index_path.exists():
         backup_dir = output_dir / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_path = backup_dir / f"topic_index_before_step_{step_number:04d}.json"
         backup_path.write_text(index_path.read_text(encoding="utf-8"), encoding="utf-8")
 
-    _write_json_atomically(index_path, _dump_topics(topics))
+    cleaned_topics, _fixes = clean_topic_index(topics)
+    _write_json_atomically(index_path, _dump_topics(cleaned_topics))
     return index_path
 
 

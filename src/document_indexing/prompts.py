@@ -11,11 +11,12 @@ TOPIC_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             (
                 "You build compact topic indexes for page-wise Markdown documents. "
-                "You index only the target page. Use previous page indexed topics "
-                "only as continuity hints for whether target-page content continues "
-                "an existing topic. Use next page Markdown only for continuation or "
+                "You index only the target page from the JSON payload. Use previous "
+                "page topics only as continuity hints; when target-page content "
+                "continues a previous topic, reuse the same topic name when "
+                "appropriate. Use next page Markdown only for continuation or "
                 "boundary context. Never include previous or next page numbers in "
-                "candidate pages. Return topic names, rich evidence-dense "
+                "the returned topic text. Return topic names, rich evidence-dense "
                 "descriptions, and asset_paths selected only from the provided "
                 "target-page assets. Do not return keywords. Descriptions should be "
                 "one to three sentences and include exact meaningful terms, "
@@ -28,17 +29,9 @@ TOPIC_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages(
         (
             "human",
             (
-                "Existing topic index summary:\n{existing_topic_summary}\n\n"
-                "Previous page number:\n{previous_page_number}\n\n"
-                "Previous page indexed topics:\n{previous_page_indexed_topics}\n\n"
-                "Target page number:\n{target_page_number}\n\n"
-                "Target page Markdown:\n{target_page_markdown}\n\n"
-                "Target page assets available for asset_paths:\n{target_page_assets}\n\n"
-                "Next page number:\n{next_page_number}\n\n"
-                "Next page Markdown:\n{next_page_markdown}\n\n"
-                "Create topics, not page summaries. Candidate pages must contain "
-                "only the target page number. Candidate asset_paths must contain only "
-                "paths listed in target page assets."
+                "Payload:\n{payload}\n\n"
+                "Create topics, not page summaries. Candidate asset_paths must "
+                "contain only paths listed in target_page_assets."
             ),
         ),
     ]
@@ -51,16 +44,19 @@ TOPIC_MATCHING_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             (
                 "Decide whether each candidate topic updates an existing topic or "
-                "should be added as a new topic. Match by meaning, description, "
-                "asset-backed evidence, and page proximity, not only exact title."
+                "has no match in this batch. Use only the candidate and existing "
+                "topic names and descriptions in the JSON payload. Return one "
+                "decision for each candidate slot. For updates, set matched_batch_slot "
+                "to the existing topic slot. If no existing topic in this batch "
+                "matches, return no_match and leave matched_batch_slot null. Do not "
+                "use free-text topic names as match targets."
             ),
         ),
         (
             "human",
             (
-                "Current topic index:\n{current_index}\n\n"
-                "Candidate topics:\n{candidates}\n\n"
-                "Return one decision for each candidate topic."
+                "Payload:\n{payload}\n\n"
+                "Return one structured decision for each candidate."
             ),
         ),
     ]
@@ -83,7 +79,7 @@ DESCRIPTION_UPDATE_PROMPT = ChatPromptTemplate.from_messages(
             "human",
             (
                 "Existing topic:\n{existing_topic}\n\n"
-                "New candidate details:\n{candidate_topic}\n\n"
+                "New candidate details:\n{new_candidate}\n\n"
                 "Return only the improved description in the schema."
             ),
         ),

@@ -40,16 +40,13 @@ doc_comparing/
 |       |-- __init__.py
 |       |-- __main__.py
 |       |-- config.py
-|       |-- graph.py
 |       |-- llm.py
 |       |-- main.py
-|       |-- nodes.py
+|       |-- pipeline.py
 |       |-- prompts.py
-|       |-- routers.py
 |       |-- schemas.py
-|       |-- state.py
-|       |-- storage.py
-|       `-- validator.py
+|       |-- steps.py
+|       `-- storage.py
 |   `-- document_retrieval/
 |       |-- __init__.py
 |       |-- __main__.py
@@ -128,6 +125,16 @@ You can override paths:
 python src/document_indexing/main.py --pages-folder sample_doc_assets/enriched_doc/pages_md --output-folder sample_doc_assets/indexing_output --document-id sample
 ```
 
+Indexing is a plain sequential loop: read resume state, read one target page,
+extract target-page topics with previous/next-page continuity context, match
+unresolved candidates backward through recent active topic batches, update or
+append topics, save progress, then continue to the next page. It does not use
+LangGraph.
+
+By default indexing writes only product/resume artifacts. Add
+`--write-diagnostics` to also write `revision_log.md`, `validation_report.json`,
+and `backups/` for debugging.
+
 ## Outputs
 
 For `sample.pdf`, generated artifacts are written under `sample_doc_assets/`:
@@ -150,10 +157,7 @@ sample_doc_assets/
 |   `-- readable_processed_doc.md
 `-- indexing_output/
     |-- topic_index.json
-    |-- processing_state.json
-    |-- validation_report.json
-    |-- revision_log.md
-    `-- backups/
+    `-- processing_state.json
 ```
 
 `page_asset_registry.json` records page-local figure, table, and formula assets
@@ -163,7 +167,7 @@ in an `Unresolved Assets` section at the bottom of that same enriched page.
 
 The readable markdown keeps old-style relative image links such as `![Table](table_images/table-1.png)` next to retrieval-friendly descriptions.
 
-The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`. Each topic entry contains `topic`, `pages`, a rich evidence-focused `description`, and `assets` for target-page figures, tables, and formulas. Legacy `keywords` entries can still be loaded, but new index writes use `assets` instead.
+The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`. Each topic entry contains `topic`, `pages`, a rich evidence-focused `description`, and `assets` for target-page figures, tables, and formulas. Legacy `keywords` entries can still be loaded, but new index writes use `assets` instead. Optional diagnostics are not product artifacts and are only written when requested.
 
 ## Artifact Retention
 

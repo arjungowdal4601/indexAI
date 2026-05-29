@@ -35,16 +35,18 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 output_folder_path=output_dir,
                 document_id="sample",
                 include_next_page_context=True,
-                token_limit=80000,
+                topic_match_batch_size=10,
+                write_diagnostics=False,
                 event_callback=None,
             )
 
-    def test_cli_uses_boolean_next_page_context_option(self):
+    def test_cli_uses_boolean_next_page_and_diagnostics_options(self):
         from document_indexing.main import build_parser
 
         parser = build_parser()
         default_args = parser.parse_args([])
         disabled_args = parser.parse_args(["--no-next-page-context"])
+        diagnostics_args = parser.parse_args(["--write-diagnostics"])
         option_strings = {
             option
             for action in parser._actions
@@ -52,8 +54,13 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
         }
 
         self.assertTrue(default_args.include_next_page_context)
+        self.assertFalse(default_args.write_diagnostics)
         self.assertFalse(disabled_args.include_next_page_context)
+        self.assertTrue(diagnostics_args.write_diagnostics)
         self.assertIn("--no-next-page-context", option_strings)
+        self.assertIn("--write-diagnostics", option_strings)
+        self.assertIn("--topic-match-batch-size", option_strings)
+        self.assertNotIn("--token-limit", option_strings)
         self.assertNotIn("--main-window-size", option_strings)
         self.assertNotIn("--context-window-size", option_strings)
 

@@ -15,7 +15,7 @@ if __package__ in (None, ""):
 from document_indexing.config import (
     DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     DEFAULT_PAGES_FOLDER,
-    DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    DEFAULT_TOPIC_MATCH_BATCH_SIZE,
     INDEXING_OUTPUT_FOLDER,
 )
 from document_indexing.pipeline import run_document_indexing
@@ -45,7 +45,8 @@ def run_indexing_pipeline(
     output_folder_path: str | Path | None = None,
     document_id: str | None = None,
     include_next_page_context: bool = DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
-    token_limit: int = DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
+    write_diagnostics: bool = False,
     event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> IndexingOutput:
     pages_folder = Path(pages_folder_path)
@@ -61,7 +62,8 @@ def run_indexing_pipeline(
         output_folder_path=output_folder,
         document_id=resolved_document_id,
         include_next_page_context=include_next_page_context,
-        token_limit=token_limit,
+        topic_match_batch_size=topic_match_batch_size,
+        write_diagnostics=write_diagnostics,
         event_callback=event_callback,
     )
 
@@ -93,9 +95,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not include the following page as extraction-only context.",
     )
     parser.add_argument(
-        "--token-limit",
+        "--topic-match-batch-size",
         type=int,
-        default=DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+        default=DEFAULT_TOPIC_MATCH_BATCH_SIZE,
+        help="Number of existing topics to compare per backward matching batch.",
+    )
+    parser.add_argument(
+        "--write-diagnostics",
+        action="store_true",
+        default=False,
+        help="Write optional revision log, validation report, and topic index backups.",
     )
     return parser
 
@@ -107,14 +116,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_folder_path=args.output_folder,
         document_id=args.document_id,
         include_next_page_context=args.include_next_page_context,
-        token_limit=args.token_limit,
+        topic_match_batch_size=args.topic_match_batch_size,
+        write_diagnostics=args.write_diagnostics,
     )
 
     print("DOCUMENT INDEXING COMPLETE")
     print(f"Topic index JSON: {output.topic_index_path}")
     print(f"Processing state JSON: {output.processing_state_path}")
-    print(f"Revision log: {output.revision_log_path}")
-    print(f"Validation report JSON: {output.validation_report_path}")
+    print(f"Diagnostic revision log path: {output.revision_log_path}")
+    print(f"Diagnostic validation report path: {output.validation_report_path}")
     return 0
 
 

@@ -84,11 +84,6 @@ def fake_index_document(pages_folder_path, output_folder_path, document_id, **_k
         encoding="utf-8",
     )
     (output_folder / "processing_state.json").write_text("{}", encoding="utf-8")
-    (output_folder / "validation_report.json").write_text("{}", encoding="utf-8")
-    (output_folder / "revision_log.md").write_text("revision", encoding="utf-8")
-    backup_dir = output_folder / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    (backup_dir / "topic_index_before_step_0001.json").write_text("[]", encoding="utf-8")
     return SimpleNamespace(
         topic_index_path=topic_index_path,
         processing_state_path=output_folder / "processing_state.json",

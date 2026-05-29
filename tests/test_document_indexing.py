@@ -6,7 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from document_indexing import run_document_indexing
-from document_indexing.llm import LangChainTopicIndexingClient
+from document_indexing.llm import (
+    LangChainTopicIndexingClient,
+    build_extraction_payload,
+    build_matching_payload,
+)
 from document_indexing.prompts import (
     DESCRIPTION_UPDATE_PROMPT,
     TOPIC_EXTRACTION_PROMPT,
@@ -14,9 +18,11 @@ from document_indexing.prompts import (
 )
 from document_indexing.schemas import (
     TopicAsset,
+    TopicCandidate,
     TopicCandidateDraft,
     TopicEntry,
     TopicMatchDecision,
+    PageMarkdown,
 )
 from document_indexing.storage import (
     extract_page_assets,
@@ -28,7 +34,7 @@ from document_indexing.storage import (
     write_processing_state,
     write_topic_index,
 )
-from document_indexing.validator import validate_topic_index
+from document_indexing.steps import update_topic_index
 from document_indexing.schemas import ProcessingState
 
 
@@ -39,7 +45,6 @@ class FakeIndexingClient:
         target_page_assets,
         previous_page_topics,
         next_page,
-        existing_topics,
     ):
         if target_page.page == 1:
             return [
@@ -82,16 +87,16 @@ class FakeIndexingClient:
 
     def match_topics(self, candidates, current_index):
         decisions = []
-        for candidate in candidates:
+        for slot, candidate in enumerate(candidates):
             should_update = (
                 current_index
                 and candidate.topic == current_index[0].topic
             )
             decisions.append(
                 TopicMatchDecision(
-                    candidate_topic=candidate.topic,
-                    decision="update_existing" if should_update else "add_new",
-                    matched_topic=current_index[0].topic if should_update else None,
+                    candidate_batch_slot=slot,
+                    decision="update_existing" if should_update else "no_match",
+                    matched_batch_slot=0 if should_update else None,
                     reason="same topic" if should_update else "new topic",
                 )
             )
@@ -113,6 +118,84 @@ class FlakyExtractIndexingClient(FakeIndexingClient):
         if self.extract_attempts == 1:
             raise RuntimeError("Connection timeout 503")
         return super().extract_candidates(*args, **kwargs)
+
+
+def make_topic(topic, page, description=None, assets=None):
+    return TopicEntry(
+        topic=topic,
+        pages=[page],
+        description=description or f"{topic} description.",
+        assets=assets or [],
+    )
+
+
+def make_candidate(topic, page=9, description=None, assets=None):
+    return TopicCandidate(
+        topic=topic,
+        pages=[page],
+        description=description or f"{topic} candidate description.",
+        assets=assets or [],
+    )
+
+
+def make_asset(page=9, path="table_images/table-9.png"):
+    return TopicAsset(
+        page=page,
+        type="table",
+        path=path,
+        description=f"Asset at {path}.",
+    )
+
+
+def update_decision(candidate_slot, matched_slot):
+    return TopicMatchDecision(
+        candidate_batch_slot=candidate_slot,
+        decision="update_existing",
+        matched_batch_slot=matched_slot,
+        reason="same topic",
+    )
+
+
+def no_match_decision(candidate_slot):
+    return TopicMatchDecision(
+        candidate_batch_slot=candidate_slot,
+        decision="no_match",
+        matched_batch_slot=None,
+        reason="not in this batch",
+    )
+
+
+class BatchMatchingClient:
+    def __init__(self, response_builder):
+        self.response_builder = response_builder
+        self.match_calls = []
+        self.match_payloads = []
+        self.merge_calls = []
+
+    def match_topics(self, candidates, current_index):
+        self.match_calls.append(
+            {
+                "candidate_topics": [candidate.topic for candidate in candidates],
+                "existing_topics": [topic.topic for topic in current_index],
+            }
+        )
+        self.match_payloads.append(
+            json.loads(
+                build_matching_payload(
+                    candidates=candidates,
+                    existing_topics=current_index,
+                )
+            )
+        )
+        return self.response_builder(
+            len(self.match_calls),
+            candidates,
+            current_index,
+        )
+
+    def merge_topic(self, existing_topic, candidate):
+        self.merge_calls.append((existing_topic.topic, candidate.topic))
+        return f"{existing_topic.description} {candidate.description}"
 
 
 class DocumentIndexingStorageTests(unittest.TestCase):
@@ -255,37 +338,86 @@ class DocumentIndexingStorageTests(unittest.TestCase):
             self.assertEqual(topics[0].topic, "Legacy topic")
             self.assertEqual(topics[0].assets, [])
 
-    def test_write_topic_index_creates_backup_before_overwrite(self):
+    def test_write_topic_index_cleans_topics_without_default_backups(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
-            original = [
+            topics = [
                 TopicEntry(
-                    topic="Original",
-                    pages=[1],
-                    description="Original description.",
-                    assets=[],
-                )
-            ]
-            updated = [
-                TopicEntry(
-                    topic="Updated",
-                    pages=[1, 2],
-                    description="Updated description.",
+                    topic=" Updated ",
+                    pages=[3, 1, 3],
+                    description=" Updated description. ",
                     assets=[
+                        TopicAsset(
+                            page=2,
+                            type="formula",
+                            path=" formula_images/formula-1.png ",
+                            description=" Important formula. ",
+                        ),
                         TopicAsset(
                             page=2,
                             type="formula",
                             path="formula_images/formula-1.png",
                             description="Important formula.",
-                        )
+                        ),
                     ],
                 )
             ]
 
-            write_topic_index(output_dir, original, step_number=1)
-            write_topic_index(output_dir, updated, step_number=2)
+            write_topic_index(output_dir, topics, step_number=1)
 
             index_data = json.loads((output_dir / "topic_index.json").read_text())
+            self.assertEqual(
+                index_data,
+                [
+                    {
+                        "topic": "Updated",
+                        "pages": [1, 3],
+                        "description": "Updated description.",
+                        "assets": [
+                            {
+                                "page": 2,
+                                "type": "formula",
+                                "path": "formula_images/formula-1.png",
+                                "description": "Important formula.",
+                            }
+                        ],
+                    }
+                ],
+            )
+            self.assertNotIn("keywords", index_data[0])
+            self.assertFalse((output_dir / "backups").exists())
+
+    def test_write_topic_index_creates_backup_only_when_diagnostics_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            write_topic_index(
+                output_dir,
+                [
+                    TopicEntry(
+                        topic="Original",
+                        pages=[1],
+                        description="Original description.",
+                        assets=[],
+                    )
+                ],
+                step_number=1,
+                write_backup=True,
+            )
+            write_topic_index(
+                output_dir,
+                [
+                    TopicEntry(
+                        topic="Updated",
+                        pages=[1, 2],
+                        description="Updated description.",
+                        assets=[],
+                    )
+                ],
+                step_number=2,
+                write_backup=True,
+            )
+
             backup_data = json.loads(
                 (
                     output_dir
@@ -293,9 +425,6 @@ class DocumentIndexingStorageTests(unittest.TestCase):
                     / "topic_index_before_step_0002.json"
                 ).read_text()
             )
-            self.assertEqual(index_data[0]["topic"], "Updated")
-            self.assertIn("assets", index_data[0])
-            self.assertNotIn("keywords", index_data[0])
             self.assertEqual(backup_data[0]["topic"], "Original")
 
     def test_load_processing_state_resumes_legacy_state_without_window_config(self):
@@ -344,40 +473,6 @@ class DocumentIndexingStorageTests(unittest.TestCase):
             self.assertNotIn("context_window_size", payload)
 
 
-class DocumentIndexingValidatorTests(unittest.TestCase):
-    def test_validator_allows_rich_descriptions_and_deduplicates_assets(self):
-        topics = [
-            TopicEntry(
-                topic="Capital Rules",
-                pages=[3, 1, 3],
-                description=" ".join(["word"] * 90),
-                assets=[
-                    TopicAsset(
-                        page=3,
-                        type="formula",
-                        path=" formula_images/formula-1.png ",
-                        description=" Capital ratio formula. ",
-                    ),
-                    TopicAsset(
-                        page=3,
-                        type="formula",
-                        path="formula_images/formula-1.png",
-                        description="Capital ratio formula.",
-                    ),
-                ],
-            )
-        ]
-
-        report, cleaned = validate_topic_index(topics, token_limit=10)
-
-        self.assertEqual(report.status, "passed")
-        self.assertEqual(cleaned[0].pages, [1, 3])
-        self.assertEqual(len(cleaned[0].assets), 1)
-        self.assertEqual(cleaned[0].assets[0].path, "formula_images/formula-1.png")
-        self.assertNotIn("description_too_long: Capital Rules", report.warnings)
-        self.assertIn("token_budget_exceeded", report.warnings)
-
-
 class DocumentIndexingPromptTests(unittest.TestCase):
     def test_llm_client_uses_langchain_structured_output_chains(self):
         self.assertEqual(
@@ -406,20 +501,372 @@ class DocumentIndexingPromptTests(unittest.TestCase):
     def test_topic_extraction_prompt_uses_generic_target_page_contract(self):
         prompt_text = str(TOPIC_EXTRACTION_PROMPT)
 
-        self.assertIn("previous_page_indexed_topics", prompt_text)
-        self.assertIn("target_page_assets", prompt_text)
-        self.assertIn("target_page_markdown", prompt_text)
-        self.assertIn("next_page_markdown", prompt_text)
+        self.assertIn("payload", prompt_text)
         self.assertIn("index only the target page", prompt_text.lower())
         self.assertIn("never include previous or next page numbers", prompt_text.lower())
+        self.assertIn("reuse the same topic name", prompt_text.lower())
         self.assertIn("do not return keywords", prompt_text.lower())
         self.assertNotIn("Transformer", prompt_text)
         self.assertNotIn("scaled dot-product", prompt_text.lower())
         self.assertNotIn("Attention(Q,K,V)", prompt_text)
 
+    def test_extraction_payload_excludes_full_existing_index(self):
+        target_page = PageMarkdown(page=3, markdown="Current target page text.")
+        next_page = PageMarkdown(page=4, markdown="Next page boundary text.")
+        previous_page_topics = [
+            TopicEntry(
+                topic="Previous continuing topic",
+                pages=[1, 2],
+                description="Previous page topic description.",
+                assets=[
+                    TopicAsset(
+                        page=2,
+                        type="table",
+                        path="table_images/old-table.png",
+                        description="Old table from previous page.",
+                    )
+                ],
+            )
+        ]
+        unrelated_index_topic = TopicEntry(
+            topic="Unrelated whole-index topic",
+            pages=[99],
+            description="This must never be sent to extraction.",
+            assets=[],
+        )
+
+        payload = json.loads(
+            build_extraction_payload(
+                target_page=target_page,
+                target_page_assets=[
+                    TopicAsset(
+                        page=3,
+                        type="figure",
+                        path="image_png_images/current-figure.png",
+                        description="Current target page figure.",
+                    )
+                ],
+                previous_page_topics=previous_page_topics,
+                next_page=next_page,
+            )
+        )
+        payload_text = json.dumps(payload)
+
+        self.assertEqual(payload["target_page_markdown"], "Current target page text.")
+        self.assertEqual(payload["next_page_markdown"], "Next page boundary text.")
+        self.assertEqual(
+            payload["previous_page_topics"],
+            [
+                {
+                    "topic": "Previous continuing topic",
+                    "description": "Previous page topic description.",
+                }
+            ],
+        )
+        self.assertIn("current-figure.png", payload_text)
+        self.assertNotIn("old-table.png", payload_text)
+        self.assertNotIn("pages", payload["previous_page_topics"][0])
+        self.assertNotIn(unrelated_index_topic.topic, payload_text)
+
+    def test_matching_payload_contains_only_slots_topics_and_descriptions(self):
+        candidates = [
+            TopicCandidate(
+                topic="Candidate A",
+                pages=[3],
+                description="Candidate A description.",
+                assets=[
+                    TopicAsset(
+                        page=3,
+                        type="formula",
+                        path="formula_images/formula-1.png",
+                        description="Candidate asset.",
+                    )
+                ],
+            )
+        ]
+        existing_topics = [
+            TopicEntry(
+                topic="Existing A",
+                pages=[1, 2],
+                description="Existing A description.",
+                assets=[
+                    TopicAsset(
+                        page=2,
+                        type="table",
+                        path="table_images/table-1.png",
+                        description="Existing asset.",
+                    )
+                ],
+            )
+        ]
+
+        payload = json.loads(
+            build_matching_payload(candidates=candidates, existing_topics=existing_topics)
+        )
+        payload_text = json.dumps(payload)
+
+        self.assertEqual(
+            payload,
+            {
+                "candidates": [
+                    {
+                        "slot": 0,
+                        "topic": "Candidate A",
+                        "description": "Candidate A description.",
+                    }
+                ],
+                "existing_topics": [
+                    {
+                        "slot": 0,
+                        "topic": "Existing A",
+                        "description": "Existing A description.",
+                    }
+                ],
+            },
+        )
+        self.assertNotIn("pages", payload_text)
+        self.assertNotIn("assets", payload_text)
+        self.assertNotIn("formula_images", payload_text)
+        self.assertNotIn("table_images", payload_text)
+
+    def test_matching_prompt_uses_slot_targets_without_asset_or_page_proximity(self):
+        prompt_text = str(TOPIC_MATCHING_PROMPT).lower()
+
+        self.assertIn("matched_batch_slot", prompt_text)
+        self.assertIn("no_match", prompt_text)
+        self.assertIn("slot", prompt_text)
+        self.assertNotIn("asset-backed", prompt_text)
+        self.assertNotIn("page proximity", prompt_text)
+        self.assertNotIn("assets", prompt_text)
+
+
+class DocumentIndexingBackwardBatchMatchingTests(unittest.TestCase):
+    def run_update(self, current_index, candidates, client, batch_size=2):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            return update_topic_index(
+                current_index=current_index,
+                candidates=candidates,
+                client=client,
+                output_dir=Path(temp_dir),
+                document_id="doc-1",
+                processing_state=ProcessingState(
+                    document_id="doc-1",
+                    last_completed_page=3,
+                    next_start_page=4,
+                    status="in_progress",
+                ),
+                event_callback=None,
+                target_page=4,
+                total_pages=4,
+                topic_match_batch_size=batch_size,
+            )
+
+    def test_all_candidates_resolved_in_first_tail_batch_stops_early(self):
+        current_index = [
+            make_topic("Older topic", 1),
+            make_topic("Tail target", 2),
+            make_topic("Newer unrelated", 3),
+        ]
+        candidates = [
+            make_candidate(
+                "Tail target",
+                page=4,
+                assets=[make_asset(page=4, path="table_images/current.png")],
+            )
+        ]
+
+        def respond(call_number, batch_candidates, batch_topics):
+            self.assertEqual(call_number, 1)
+            self.assertEqual(
+                [topic.topic for topic in batch_topics],
+                ["Tail target", "Newer unrelated"],
+            )
+            return [update_decision(candidate_slot=0, matched_slot=0)]
+
+        client = BatchMatchingClient(respond)
+
+        updated_index, added, updated = self.run_update(
+            current_index,
+            candidates,
+            client,
+            batch_size=2,
+        )
+
+        self.assertEqual(len(client.match_calls), 1)
+        self.assertEqual(added, [])
+        self.assertEqual(updated, ["Tail target"])
+        self.assertEqual(
+            [topic.topic for topic in updated_index],
+            ["Older topic", "Newer unrelated", "Tail target"],
+        )
+        self.assertEqual(updated_index[-1].pages, [2, 4])
+        self.assertEqual(
+            [asset.path for asset in updated_index[-1].assets],
+            ["table_images/current.png"],
+        )
+
+    def test_partial_first_batch_resolution_carries_only_unresolved_backward(self):
+        current_index = [
+            make_topic("Older unrelated", 1),
+            make_topic("Older target", 1),
+            make_topic("Newer unrelated", 2),
+            make_topic("Tail target", 3),
+        ]
+        candidates = [
+            make_candidate("Tail target", page=4),
+            make_candidate("Older target", page=4),
+        ]
+
+        def respond(call_number, batch_candidates, batch_topics):
+            if call_number == 1:
+                self.assertEqual(
+                    [candidate.topic for candidate in batch_candidates],
+                    ["Tail target", "Older target"],
+                )
+                self.assertEqual(
+                    [topic.topic for topic in batch_topics],
+                    ["Newer unrelated", "Tail target"],
+                )
+                return [
+                    update_decision(candidate_slot=0, matched_slot=1),
+                    no_match_decision(candidate_slot=1),
+                ]
+
+            self.assertEqual(call_number, 2)
+            self.assertEqual(
+                [candidate.topic for candidate in batch_candidates],
+                ["Older target"],
+            )
+            self.assertEqual(
+                [topic.topic for topic in batch_topics],
+                ["Older unrelated", "Older target"],
+            )
+            return [update_decision(candidate_slot=0, matched_slot=1)]
+
+        client = BatchMatchingClient(respond)
+
+        updated_index, added, updated = self.run_update(
+            current_index,
+            candidates,
+            client,
+            batch_size=2,
+        )
+
+        self.assertEqual(len(client.match_calls), 2)
+        self.assertEqual(added, [])
+        self.assertEqual(updated, ["Tail target", "Older target"])
+        self.assertEqual(
+            [topic.topic for topic in updated_index],
+            ["Older unrelated", "Newer unrelated", "Tail target", "Older target"],
+        )
+
+    def test_unmatched_candidates_after_all_batches_are_added_at_tail(self):
+        current_index = [
+            make_topic("Old 1", 1),
+            make_topic("Old 2", 2),
+            make_topic("Old 3", 3),
+        ]
+        candidates = [make_candidate("Never matched", page=4)]
+
+        def respond(call_number, batch_candidates, batch_topics):
+            return [no_match_decision(candidate_slot=0)]
+
+        client = BatchMatchingClient(respond)
+
+        updated_index, added, updated = self.run_update(
+            current_index,
+            candidates,
+            client,
+            batch_size=2,
+        )
+
+        self.assertEqual(len(client.match_calls), 2)
+        self.assertEqual(added, ["Never matched"])
+        self.assertEqual(updated, [])
+        self.assertEqual(updated_index[-1].topic, "Never matched")
+        self.assertEqual(updated_index[-1].pages, [4])
+
+    def test_updated_old_topic_moves_to_tail(self):
+        current_index = [
+            make_topic("Old target", 1),
+            make_topic("Middle topic", 2),
+            make_topic("Tail topic", 3),
+        ]
+        candidates = [make_candidate("Old target", page=4)]
+
+        def respond(call_number, batch_candidates, batch_topics):
+            self.assertEqual(
+                [topic.topic for topic in batch_topics],
+                ["Old target", "Middle topic", "Tail topic"],
+            )
+            return [update_decision(candidate_slot=0, matched_slot=0)]
+
+        client = BatchMatchingClient(respond)
+
+        updated_index, added, updated = self.run_update(
+            current_index,
+            candidates,
+            client,
+            batch_size=10,
+        )
+
+        self.assertEqual(added, [])
+        self.assertEqual(updated, ["Old target"])
+        self.assertEqual(
+            [topic.topic for topic in updated_index],
+            ["Middle topic", "Tail topic", "Old target"],
+        )
+
+    def test_batch_matcher_payload_contains_no_assets_or_pages(self):
+        current_index = [
+            make_topic(
+                "Asset-heavy old topic",
+                1,
+                assets=[make_asset(page=1, path="table_images/old.png")],
+            )
+        ]
+        candidates = [
+            make_candidate(
+                "Asset-heavy candidate",
+                page=4,
+                assets=[make_asset(page=4, path="table_images/new.png")],
+            )
+        ]
+
+        def respond(call_number, batch_candidates, batch_topics):
+            return [no_match_decision(candidate_slot=0)]
+
+        client = BatchMatchingClient(respond)
+
+        self.run_update(current_index, candidates, client, batch_size=10)
+
+        payload_text = json.dumps(client.match_payloads)
+        self.assertEqual(
+            client.match_payloads[0],
+            {
+                "candidates": [
+                    {
+                        "slot": 0,
+                        "topic": "Asset-heavy candidate",
+                        "description": "Asset-heavy candidate candidate description.",
+                    }
+                ],
+                "existing_topics": [
+                    {
+                        "slot": 0,
+                        "topic": "Asset-heavy old topic",
+                        "description": "Asset-heavy old topic description.",
+                    }
+                ],
+            },
+        )
+        self.assertNotIn("pages", payload_text)
+        self.assertNotIn("assets", payload_text)
+        self.assertNotIn("table_images", payload_text)
+
 
 class DocumentIndexingPipelineTests(unittest.TestCase):
-    def test_document_indexing_uses_sequential_pipeline_not_graph_modules(self):
+    def test_document_indexing_uses_sequential_pipeline_without_langgraph_imports(self):
         indexing_dir = Path("src/document_indexing")
         python_files = [
             path
@@ -432,11 +879,9 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
 
         self.assertTrue((indexing_dir / "pipeline.py").exists())
         self.assertTrue((indexing_dir / "steps.py").exists())
-        self.assertFalse((indexing_dir / "graph.py").exists())
-        self.assertFalse((indexing_dir / "routers.py").exists())
-        self.assertFalse((indexing_dir / "state.py").exists())
         self.assertNotIn("langgraph", combined_source.lower())
         self.assertNotIn("StateGraph", combined_source)
+        self.assertNotIn("export_graph_mermaid", combined_source)
 
     def test_pipeline_indexes_adjacent_target_pages_into_one_continuous_topic(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -488,7 +933,6 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
 
             topic_index = json.loads(output.topic_index_path.read_text())
             processing_state = json.loads(output.processing_state_path.read_text())
-            log_text = output.revision_log_path.read_text(encoding="utf-8")
 
             self.assertEqual(len(topic_index), 2)
             self.assertEqual(topic_index[0]["topic"], "Neutral policy requirements")
@@ -517,10 +961,9 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
             self.assertEqual(processing_state["status"], "completed")
             self.assertNotIn("main_window_size", processing_state)
             self.assertNotIn("context_window_size", processing_state)
-            self.assertIn("Target page: 1", log_text)
-            self.assertIn("Target page: 2", log_text)
-            self.assertIn("Previous page indexed topics: Neutral policy requirements", log_text)
-            self.assertIn("Next context page: 3", log_text)
+            self.assertFalse(output.revision_log_path.exists())
+            self.assertFalse(output.validation_report_path.exists())
+            self.assertFalse((output_dir / "backups").exists())
             self.assertIn(
                 ("document_indexing", "indexing_page", "Indexing page 1 of 3", 1, 3),
                 events,
@@ -528,6 +971,44 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
             self.assertIn(
                 ("document_indexing", "indexing_page", "Indexing page 3 of 3", 3, 3),
                 events,
+            )
+
+    def test_diagnostics_mode_writes_revision_log_validation_report_and_backups(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            pages_dir = root / "pages_md"
+            output_dir = root / "indexing_output"
+            pages_dir.mkdir()
+            for page_no in range(1, 3):
+                (pages_dir / f"page_{page_no:04d}.md").write_text(
+                    f"Neutral policy content on page {page_no}.",
+                    encoding="utf-8",
+                )
+
+            output = run_document_indexing(
+                pages_folder_path=pages_dir,
+                output_folder_path=output_dir,
+                document_id="capital-doc",
+                include_next_page_context=True,
+                write_diagnostics=True,
+                client=FakeIndexingClient(),
+            )
+
+            log_text = output.revision_log_path.read_text(encoding="utf-8")
+            report = json.loads(output.validation_report_path.read_text(encoding="utf-8"))
+
+            self.assertIn("Target page: 1", log_text)
+            self.assertIn("Target page: 2", log_text)
+            self.assertIn("Estimated topic index size:", log_text)
+            self.assertEqual(report["status"], "passed")
+            self.assertGreater(report["estimated_tokens"], 0)
+            self.assertEqual(report["warnings"], [])
+            self.assertTrue(
+                (
+                    output_dir
+                    / "backups"
+                    / "topic_index_before_step_0002.json"
+                ).exists()
             )
 
     def test_indexing_retries_transient_llm_errors_and_emits_waiting_events(self):

@@ -7,6 +7,7 @@ from typing import Callable, Literal
 
 from backend.services.retry_utils import run_with_retries
 
+from .config import DEFAULT_TOPIC_MATCH_BATCH_SIZE
 from .llm import TopicIndexingClient
 from .schemas import (
     PageManifest,
@@ -21,11 +22,12 @@ from .schemas import (
 )
 from .storage import (
     append_revision_log,
+    build_topic_index_diagnostics,
+    clean_topic_index,
     write_processing_state,
     write_topic_index,
     write_validation_report,
 )
-from .validator import validate_topic_index
 
 EventCallback = Callable[[str, str, str, int | None, int | None], None]
 
@@ -54,18 +56,8 @@ def candidate_from_draft(
 
 def decision_by_candidate(
     decisions: list[TopicMatchDecision],
-) -> dict[str, TopicMatchDecision]:
-    return {decision.candidate_topic: decision for decision in decisions}
-
-
-def find_topic(topics: list[TopicEntry], topic_name: str | None) -> TopicEntry | None:
-    if not topic_name:
-        return None
-    normalized = topic_name.strip().lower()
-    for topic in topics:
-        if topic.topic.strip().lower() == normalized:
-            return topic
-    return None
+) -> dict[int, TopicMatchDecision]:
+    return {decision.candidate_batch_slot: decision for decision in decisions}
 
 
 def merge_assets(existing: list[TopicAsset], new: list[TopicAsset]) -> list[TopicAsset]:
@@ -78,6 +70,60 @@ def merge_assets(existing: list[TopicAsset], new: list[TopicAsset]) -> list[Topi
         seen.add(key)
         merged.append(asset)
     return merged
+
+
+def remove_first_topic(
+    topics: list[TopicEntry],
+    target: TopicEntry,
+) -> list[TopicEntry]:
+    remaining: list[TopicEntry] = []
+    removed = False
+    for topic in topics:
+        if not removed and topic is target:
+            removed = True
+            continue
+        remaining.append(topic)
+    if removed:
+        return remaining
+
+    remaining = []
+    for topic in topics:
+        if not removed and topic == target:
+            removed = True
+            continue
+        remaining.append(topic)
+    return remaining
+
+
+def merge_candidate_into_topic(
+    *,
+    existing_topic: TopicEntry,
+    candidate: TopicCandidate,
+    client: TopicIndexingClient,
+    output_dir: str | Path,
+    document_id: str,
+    processing_state: ProcessingState,
+    event_callback: EventCallback | None,
+    target_page: int,
+    total_pages: int,
+) -> TopicEntry:
+    merged_description = run_indexing_llm_call(
+        output_dir=output_dir,
+        document_id=document_id,
+        processing_state=processing_state,
+        stage="merge_topic",
+        message=f"Waiting for LLM response for indexing page {target_page} merge topic",
+        target_page=target_page,
+        total_pages=total_pages,
+        event_callback=event_callback,
+        func=lambda: client.merge_topic(existing_topic, candidate),
+    )
+    return TopicEntry(
+        topic=existing_topic.topic,
+        pages=sorted(set(existing_topic.pages + candidate.pages)),
+        description=merged_description,
+        assets=merge_assets(existing_topic.assets, candidate.assets),
+    )
 
 
 def write_failed_indexing_state(
@@ -152,7 +198,6 @@ def update_topic_index(
     *,
     current_index: list[TopicEntry],
     candidates: list[TopicCandidate],
-    decisions: list[TopicMatchDecision],
     client: TopicIndexingClient,
     output_dir: str | Path,
     document_id: str,
@@ -160,48 +205,77 @@ def update_topic_index(
     event_callback: EventCallback | None,
     target_page: int,
     total_pages: int,
+    topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
 ) -> tuple[list[TopicEntry], list[str], list[str]]:
     topics = list(current_index)
+    search_pool = list(current_index)
+    unresolved = list(enumerate(candidates))
     added: list[str] = []
     updated: list[str] = []
-    decisions_by_candidate = decision_by_candidate(decisions)
 
-    for candidate in candidates:
-        decision = decisions_by_candidate.get(candidate.topic)
-        if decision is None:
-            decision = TopicMatchDecision(
-                candidate_topic=candidate.topic,
-                decision="add_new",
-                matched_topic=None,
-                reason="No matcher decision returned.",
-            )
+    batch_size = max(1, int(topic_match_batch_size))
+    while unresolved and search_pool:
+        batch_start = max(0, len(search_pool) - batch_size)
+        batch_topics = search_pool[batch_start:]
+        search_pool = search_pool[:batch_start]
+        batch_candidates = [candidate for _, candidate in unresolved]
+        decisions = run_indexing_llm_call(
+            output_dir=output_dir,
+            document_id=document_id,
+            processing_state=processing_state,
+            stage="match_topics",
+            message=f"Waiting for LLM response for indexing page {target_page} topic matching",
+            target_page=target_page,
+            total_pages=total_pages,
+            event_callback=event_callback,
+            func=lambda: client.match_topics(batch_candidates, batch_topics),
+        )
+        decisions_by_candidate = decision_by_candidate(decisions)
+        next_unresolved: list[tuple[int, TopicCandidate]] = []
+        matched_slots: list[int] = []
+        candidates_by_matched_slot: dict[int, list[TopicCandidate]] = {}
 
-        existing_topic = find_topic(topics, decision.matched_topic)
-        if decision.decision == "update_existing" and existing_topic is not None:
-            merged_description = run_indexing_llm_call(
-                output_dir=output_dir,
-                document_id=document_id,
-                processing_state=processing_state,
-                stage="merge_topic",
-                message=f"Waiting for LLM response for indexing page {target_page} merge topic",
-                target_page=target_page,
-                total_pages=total_pages,
-                event_callback=event_callback,
-                func=lambda: client.merge_topic(existing_topic, candidate),
+        for local_slot, (_original_slot, candidate) in enumerate(unresolved):
+            decision = decisions_by_candidate.get(local_slot)
+            matched_slot = (
+                decision.matched_batch_slot
+                if decision is not None
+                and decision.decision == "update_existing"
+                and decision.matched_batch_slot is not None
+                and 0 <= decision.matched_batch_slot < len(batch_topics)
+                else None
             )
-            replacement = TopicEntry(
-                topic=existing_topic.topic,
-                pages=sorted(set(existing_topic.pages + candidate.pages)),
-                description=merged_description,
-                assets=merge_assets(existing_topic.assets, candidate.assets),
-            )
-            topics = [
-                replacement if topic.topic == existing_topic.topic else topic
-                for topic in topics
-            ]
+            if matched_slot is None:
+                next_unresolved.append((_original_slot, candidate))
+                continue
+
+            if matched_slot not in candidates_by_matched_slot:
+                matched_slots.append(matched_slot)
+                candidates_by_matched_slot[matched_slot] = []
+            candidates_by_matched_slot[matched_slot].append(candidate)
+
+        for matched_slot in matched_slots:
+            existing_topic = batch_topics[matched_slot]
+            replacement = existing_topic
+            for candidate in candidates_by_matched_slot[matched_slot]:
+                replacement = merge_candidate_into_topic(
+                    existing_topic=replacement,
+                    candidate=candidate,
+                    client=client,
+                    output_dir=output_dir,
+                    document_id=document_id,
+                    processing_state=processing_state,
+                    event_callback=event_callback,
+                    target_page=target_page,
+                    total_pages=total_pages,
+                )
+            topics = remove_first_topic(topics, existing_topic)
+            topics.append(replacement)
             updated.append(existing_topic.topic)
-            continue
 
+        unresolved = next_unresolved
+
+    for _candidate_slot, candidate in unresolved:
         topics.append(
             TopicEntry(
                 topic=candidate.topic,
@@ -245,7 +319,7 @@ def build_revision_log_entry(
         "Updated topics:\n"
         f"{updated_text}\n\n"
         f"Validation: {validation_report.status}\n"
-        f"Estimated tokens: {validation_report.estimated_tokens}\n\n"
+        f"Estimated topic index size: {validation_report.estimated_tokens}\n\n"
         "Warnings:\n"
         f"{warnings_text}"
     )
@@ -260,9 +334,10 @@ def index_page(
     window: PageWindow,
     current_topic_index: list[TopicEntry],
     client: TopicIndexingClient,
-    token_limit: int,
     step_number: int,
     event_callback: EventCallback | None,
+    topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
+    write_diagnostics: bool = False,
 ) -> tuple[ProcessingState, int]:
     target_page = window.target_page.page
     raw_candidates = run_indexing_llm_call(
@@ -279,7 +354,6 @@ def index_page(
             window.target_page_assets,
             window.previous_page_topics,
             window.next_page,
-            current_topic_index,
         ),
     )
     candidates = [
@@ -290,21 +364,9 @@ def index_page(
         )
         for draft in raw_candidates
     ]
-    decisions = run_indexing_llm_call(
-        output_dir=output_dir,
-        document_id=document_id,
-        processing_state=processing_state,
-        stage="match_topics",
-        message=f"Waiting for LLM response for indexing page {target_page} topic matching",
-        target_page=target_page,
-        total_pages=manifest.total_pages,
-        event_callback=event_callback,
-        func=lambda: client.match_topics(candidates, current_topic_index),
-    )
     updated_index, added, updated = update_topic_index(
         current_index=current_topic_index,
         candidates=candidates,
-        decisions=decisions,
         client=client,
         output_dir=output_dir,
         document_id=document_id,
@@ -312,32 +374,23 @@ def index_page(
         event_callback=event_callback,
         target_page=target_page,
         total_pages=manifest.total_pages,
+        topic_match_batch_size=topic_match_batch_size,
     )
-    report, cleaned_index = validate_topic_index(
-        updated_index,
-        token_limit=token_limit,
-    )
-    next_step_number = step_number + 1
-    revision_log_entry = build_revision_log_entry(
-        step_number=next_step_number,
-        window=window,
-        added_topics=added,
-        updated_topics=updated,
-        validation_report=report,
-    )
-
-    if report.status != "passed":
-        error = RuntimeError(f"Index validation failed: {report.warnings}")
+    try:
+        cleaned_index, cleanup_fixes = clean_topic_index(updated_index)
+    except Exception as exc:
         write_failed_indexing_state(
             output_dir=output_dir,
             document_id=document_id,
             processing_state=processing_state,
-            stage="validate_topic_index",
-            exc=error,
+            stage="clean_topic_index",
+            exc=exc,
             failed_page=target_page,
         )
-        write_validation_report(output_dir, report)
-        raise error
+        raise
+
+    report = build_topic_index_diagnostics(cleaned_index, cleanup_fixes)
+    next_step_number = step_number + 1
 
     last_completed_page = target_page
     next_start_page = last_completed_page + 1
@@ -351,10 +404,23 @@ def index_page(
         status=status,
     )
 
-    write_topic_index(output_dir, cleaned_index, step_number=next_step_number)
-    write_validation_report(output_dir, report)
+    write_topic_index(
+        output_dir,
+        cleaned_index,
+        step_number=next_step_number,
+        write_backup=write_diagnostics,
+    )
+    if write_diagnostics:
+        revision_log_entry = build_revision_log_entry(
+            step_number=next_step_number,
+            window=window,
+            added_topics=added,
+            updated_topics=updated,
+            validation_report=report,
+        )
+        write_validation_report(output_dir, report)
+        append_revision_log(output_dir, revision_log_entry)
     write_processing_state(output_dir, next_state)
-    append_revision_log(output_dir, revision_log_entry)
 
     if event_callback is not None:
         event_callback(

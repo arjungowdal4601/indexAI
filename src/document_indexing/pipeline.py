@@ -7,7 +7,7 @@ from typing import Callable
 
 from .config import (
     DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
-    DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    DEFAULT_TOPIC_MATCH_BATCH_SIZE,
 )
 from .llm import LangChainTopicIndexingClient, TopicIndexingClient
 from .schemas import IndexingOutput, ProcessingState
@@ -40,7 +40,8 @@ def run_document_indexing(
     document_id: str,
     include_next_page_context: bool = DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     client: TopicIndexingClient | None = None,
-    token_limit: int = DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
+    topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
+    write_diagnostics: bool = False,
     event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> IndexingOutput:
     output_folder = Path(output_folder_path)
@@ -85,7 +86,8 @@ def run_document_indexing(
             window=window,
             current_topic_index=current_topic_index,
             client=indexing_client,
-            token_limit=int(token_limit),
+            topic_match_batch_size=topic_match_batch_size,
+            write_diagnostics=write_diagnostics,
             step_number=step_number,
             event_callback=event_callback,
         )
