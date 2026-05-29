@@ -32,7 +32,7 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertEqual(PICTURE_PROMPT.__class__.__name__, "ChatPromptTemplate")
         self.assertEqual(FORMULA_PROMPT.__class__.__name__, "ChatPromptTemplate")
         self.assertEqual(
-            build_table_prompt(True, True).__class__.__name__,
+            build_table_prompt(True).__class__.__name__,
             "ChatPromptTemplate",
         )
 
@@ -45,30 +45,29 @@ class PromptTemplateTests(unittest.TestCase):
         table_context = build_table_context(
             table_id="table_001",
             page_no=2,
-            pages=[2, 3],
             current_markdown="| A | B |",
-            previous_markdown="| A | B old |",
         )
-        table_messages = build_table_prompt(True, True).invoke(
+        table_messages = build_table_prompt(True).invoke(
             {
                 "table_context": table_context,
                 "current_image_base64": "current",
-                "previous_image_base64": "previous",
             }
         ).to_messages()
         table_text = table_messages[1].content[0]["text"]
         table_system = table_messages[0].content
 
         self.assertEqual(table_messages[0].type, "system")
-        self.assertIn("Previous table fragment markdown", table_text)
         self.assertIn(
             "Describe the current fragment only. Keep exact visible terms, units, IDs, and numeric values.",
             table_text,
         )
+        self.assertNotIn("Previous table fragment", table_text)
+        self.assertNotIn("continuity", table_text.lower())
+        self.assertNotIn("Known pages for this logical table", table_text)
+        self.assertNotIn("Current page:", table_text)
         self.assertNotIn("Return bullet points", table_text)
         self.assertNotIn("Return bullet points", table_system)
         self.assertEqual(table_messages[1].content[2]["type"], "image")
-        self.assertEqual(table_messages[1].content[4]["type"], "image")
 
         formula_messages = FORMULA_PROMPT.invoke(
             {

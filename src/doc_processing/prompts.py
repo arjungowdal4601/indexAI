@@ -9,8 +9,6 @@ Style intent:
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from langchain_core.prompts import ChatPromptTemplate
 
 
@@ -34,7 +32,6 @@ PICTURE_HUMAN_TEXT = "Describe this visual content in plain English so it can be
 
 TABLE_SYSTEM_PROMPT = """You convert table fragments from technical PDFs into detailed, retrieval-friendly prose.
 Use the table image and the extracted markdown to explain what the table is about, the exact column names, units, categories, row groups, important values, ranges, comparisons, rankings, thresholds, missing values, and visible patterns.
-If the table continues from a previous page or fragment, use the previous fragment only to understand column continuity and meaning. Describe only the values visible in the current fragment unless the previous values are required to explain continuity.
 Preserve exact technical terms, signal names, abbreviations, IDs, parameter names, units, and numeric values whenever they are visible.
 Do not recreate the table as a markdown table. Do not invent values that are not visible.
 Write clear neutral prose in multiple sentences. Prioritize factual detail and searchability over shortness.
@@ -96,23 +93,10 @@ FORMULA_PROMPT = ChatPromptTemplate.from_messages(
 
 
 def build_table_prompt(
-    include_previous_image: bool,
     include_current_image: bool,
 ) -> ChatPromptTemplate:
     """Build the table prompt dynamically only when images are available."""
     content = [{"type": "text", "text": "{table_context}"}]
-
-    if include_previous_image:
-        content.extend(
-            [
-                {"type": "text", "text": "Previous table fragment image for continuity only:"},
-                {
-                    "type": "image",
-                    "base64": "{previous_image_base64}",
-                    "mime_type": "image/png",
-                },
-            ]
-        )
 
     if include_current_image:
         content.extend(
@@ -137,30 +121,15 @@ def build_table_prompt(
 def build_table_context(
     table_id: str,
     page_no: int,
-    pages: List[int],
     current_markdown: str,
-    previous_markdown: Optional[str] = None,
 ) -> str:
     """Create compact table context for the LLM.
 
     Keep this readable and boring. The LLM should spend its effort describing
     the table, not interpreting a complicated prompt format.
     """
-    previous_context = (
-        "No previous fragment is available. Treat this as the first visible fragment."
-        if not previous_markdown
-        else (
-            "Previous table fragment markdown for continuity only:\n"
-            f"{previous_markdown.strip()}\n\n"
-            "Use the previous fragment only to understand column names, repeated headers, and continuation context."
-        )
-    )
-
     return (
         f"Logical table id: {table_id}\n"
-        f"Known pages for this logical table: {pages}\n"
-        f"Current page: {page_no}\n\n"
-        f"{previous_context}\n\n"
         "Current table fragment markdown:\n"
         f"{current_markdown.strip()}\n\n"
         f"{TABLE_HUMAN_TEXT}\n"

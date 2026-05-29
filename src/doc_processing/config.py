@@ -20,7 +20,6 @@ TABLE_IMAGE_FOLDER = "table_images"
 FORMULA_IMAGE_FOLDER = "formula_images"
 
 STITCHED_MARKDOWN_FILE = "stitched_raw_docling_markdown.md"
-TABLE_CONTINUITY_JSON_FILE = "table_continuity_map.json"
 
 PAGE_SEPARATOR_TEMPLATE = "\n\n--- PAGE {page_no} ---\n\n"
 
@@ -33,14 +32,6 @@ IMAGES_SCALE = 1.6
 IMAGE_PLACEHOLDER = "[[DOCLING_IMAGE]]"
 
 # -----------------------------------------------------------------------------
-# Table detection tuning - deterministic / no LLM
+# Markdown table matching
 # -----------------------------------------------------------------------------
 MIN_TABLE_LINES = 2
-MIN_TABLE_COLUMNS = 2
-TOP_LINE_RATIO = 0.25
-BOTTOM_LINE_RATIO = 0.75
-CONTINUITY_THRESHOLD = 4.0
-
-# Keep the production table-continuity JSON small.
-# If True, only multi-page continued tables are written to the final JSON.
-ONLY_WRITE_MULTI_PAGE_TABLES = True

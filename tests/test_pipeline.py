@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import json
+import importlib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,6 +10,36 @@ from doc_processing.pipeline import run_document_processing
 
 
 class PipelineTests(unittest.TestCase):
+    def test_package_main_delegates_to_document_processing_only(self):
+        processing_main = importlib.import_module("doc_processing.main")
+
+        with patch(
+            "doc_processing.main.run_document_processing"
+        ) as run_document_processing, patch(
+            "document_indexing.run_document_indexing"
+        ) as run_document_indexing:
+            processing_main.main()
+
+        run_document_processing.assert_called_once_with()
+        run_document_indexing.assert_not_called()
+
+    def test_doc_processing_does_not_import_backend_retry_utils(self):
+        doc_processing_files = [
+            path
+            for path in Path("src/doc_processing").rglob("*.py")
+            if "__pycache__" not in path.parts
+        ]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in doc_processing_files)
+
+        self.assertNotIn("backend.services.retry_utils", combined)
+
+    def test_doc_processing_pipeline_has_no_table_extra_stage(self):
+        source = Path("src/doc_processing/pipeline.py").read_text(encoding="utf-8")
+
+        self.assertNotIn("detect_table_continuity", source)
+        self.assertNotIn("table_detection", source)
+        self.assertNotIn("table_continuity_map", source)
+
     def test_run_document_processing_does_not_start_document_indexing(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = Path(temp_dir) / "sample.pdf"
@@ -32,9 +63,6 @@ class PipelineTests(unittest.TestCase):
             with patch(
                 "doc_processing.pipeline.convert_pdf_with_docling",
                 return_value=docling_output,
-            ), patch(
-                "doc_processing.pipeline.detect_table_continuity",
-                return_value={"multi_page_table_count": 0},
             ), patch(
                 "doc_processing.pipeline.enrich_document",
                 return_value=enriched_output,
@@ -68,9 +96,6 @@ class PipelineTests(unittest.TestCase):
                 "doc_processing.pipeline.convert_pdf_with_docling",
                 return_value=docling_output,
             ) as convert_pdf, patch(
-                "doc_processing.pipeline.detect_table_continuity",
-                return_value={"multi_page_table_count": 0},
-            ), patch(
                 "doc_processing.pipeline.enrich_document",
                 return_value=enriched_output,
             ) as enrich_document:
@@ -117,9 +142,6 @@ class PipelineTests(unittest.TestCase):
                 "doc_processing.pipeline.convert_pdf_with_docling",
                 return_value=docling_output,
             ) as convert_pdf, patch(
-                "doc_processing.pipeline.detect_table_continuity",
-                return_value={"multi_page_table_count": 0},
-            ), patch(
                 "doc_processing.pipeline.enrich_document",
                 return_value=enriched_output,
             ):
@@ -148,9 +170,6 @@ class PipelineTests(unittest.TestCase):
             with patch(
                 "doc_processing.pipeline.convert_pdf_with_docling",
                 return_value=docling_output,
-            ), patch(
-                "doc_processing.pipeline.detect_table_continuity",
-                return_value={"multi_page_table_count": 0},
             ), patch(
                 "doc_processing.pipeline.enrich_document",
                 side_effect=RuntimeError("Connection timeout while enriching page 1"),
@@ -196,9 +215,6 @@ class PipelineTests(unittest.TestCase):
                 "doc_processing.pipeline.convert_pdf_with_docling",
                 return_value=docling_output,
             ) as convert_pdf, patch(
-                "doc_processing.pipeline.detect_table_continuity",
-                return_value={"multi_page_table_count": 0},
-            ), patch(
                 "doc_processing.pipeline.enrich_document",
                 return_value=enriched_output,
             ) as enrich_document:

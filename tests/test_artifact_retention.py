@@ -59,7 +59,6 @@ class ArtifactRetentionTests(unittest.TestCase):
         write_file(root / "docling_assets" / "table_images" / "table-1.png", "raw-table")
         write_file(root / "docling_assets" / "formula_images" / "formula-1.png", "raw-formula")
         write_file(root / "docling_assets" / "stitched_raw_docling_markdown.md", "stitched")
-        write_file(root / "docling_assets" / "table_continuity_map.json", "{}")
         write_file(root / "enriched_doc" / "pages_md" / "page_0001.md", "enriched")
         write_file(root / "enriched_doc" / "image_png_images" / "picture-1.png", "enriched-picture")
         write_file(root / "enriched_doc" / "table_images" / "table-1.png", "enriched-table")

@@ -57,10 +57,6 @@ def fake_process_document(_pdf_path, output_root=None, event_callback=None, **_k
         "--- PAGE 1 ---\nRaw evidence.",
         encoding="utf-8",
     )
-    (root / "docling_assets" / "table_continuity_map.json").write_text(
-        "{}",
-        encoding="utf-8",
-    )
     (images / "page-1.png").write_bytes(
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
         b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02"

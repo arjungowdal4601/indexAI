@@ -5,12 +5,11 @@ This project has separate runnable pipelines plus a backend framework wrapper.
 The document processing pipeline runs:
 
 1. **Docling conversion**: PDF to raw page-wise markdown and visual assets.
-2. **Table continuity detection**: deterministic multi-page table grouping.
-3. **Enrichment**: readable markdown with table, figure, and formula images plus descriptions.
+2. **Enrichment**: readable markdown with table, figure, and formula images plus descriptions.
 Topic indexing is a separate pipeline that reads the enriched page Markdown and writes a compact topic-centric JSON index.
 Topic retrieval is a separate query-time pipeline that reads the topic index, loads only selected enriched page Markdown files, and answers from that evidence.
 
-No LLM is used during Docling conversion or table-continuity detection. Enrichment and topic indexing use LangChain chat prompt templates and `langchain-openai`; indexing uses schema-based structured output.
+No LLM is used during Docling conversion. Enrichment and topic indexing use LangChain chat prompt templates and `langchain-openai`; indexing uses schema-based structured output.
 Retrieval also uses LangGraph, LangChain chat prompt templates, and schema-based structured output.
 
 The backend MVP wraps these pipelines with FastAPI, CSV registries, and canonical
@@ -30,11 +29,12 @@ doc_comparing/
 |-- src/
 |   |-- doc_processing/
 |   |   |-- __init__.py
+|   |   |-- __main__.py
 |   |   |-- config.py
-|   |   |-- pipeline.py
 |   |   |-- docling_converter.py
-|   |   |-- table_detection.py
 |   |   |-- enrichment.py
+|   |   |-- main.py
+|   |   |-- pipeline.py
 |   |   `-- prompts.py
 |   |-- document_indexing/
 |       |-- __init__.py
@@ -70,8 +70,7 @@ doc_comparing/
 |   |-- test_document_retrieval.py
 |   |-- test_enrichment.py
 |   |-- test_pipeline.py
-|   |-- test_prompts.py
-|   `-- test_table_detection_output.py
+|   `-- test_prompts.py
 `-- sample_doc_assets/
     |-- docling_assets/
     |-- enriched_doc/
@@ -95,7 +94,13 @@ pip install -r requirements.txt
 python main.py
 ```
 
-This runs PDF conversion, table continuity detection, and enrichment only. It does not run the document indexing pipeline.
+Package entrypoint, when the package is installed or `src` is on `PYTHONPATH`:
+
+```bash
+python -m doc_processing
+```
+
+This runs PDF conversion and enrichment only. It does not run the document indexing pipeline.
 
 ## Run Document Indexing
 
@@ -135,8 +140,8 @@ sample_doc_assets/
 |   |-- image_png_images/
 |   |-- table_images/
 |   |-- formula_images/
-|   |-- stitched_raw_docling_markdown.md
-|   `-- table_continuity_map.json
+|   |-- page_asset_registry.json
+|   `-- stitched_raw_docling_markdown.md
 |-- enriched_doc/
 |   |-- pages_md/
 |   |-- image_png_images/
@@ -151,7 +156,12 @@ sample_doc_assets/
     `-- backups/
 ```
 
-The readable markdown keeps old-style relative image links such as `![Table](table_images/table-1.png)` while using table-continuity context to improve continued table descriptions.
+`page_asset_registry.json` records page-local figure, table, and formula assets
+as each page is converted. Enrichment uses only the registry entry for the page
+being processed; if a page-local asset cannot be placed exactly, it is preserved
+in an `Unresolved Assets` section at the bottom of that same enriched page.
+
+The readable markdown keeps old-style relative image links such as `![Table](table_images/table-1.png)` next to retrieval-friendly descriptions.
 
 The topic index is a single continuous JSON list grouped only by topic. Page windows are internal to indexing and are not written into `topic_index.json`. Each topic entry contains `topic`, `pages`, a rich evidence-focused `description`, and `assets` for target-page figures, tables, and formulas. Legacy `keywords` entries can still be loaded, but new index writes use `assets` instead.
 

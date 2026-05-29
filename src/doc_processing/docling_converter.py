@@ -9,8 +9,6 @@ blocks, call an LLM, or write a manifest.
 from __future__ import annotations
 
 import gc
-import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -29,32 +27,23 @@ from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
+from .asset_registry import (
+    AssetRecord,
+    build_page_registry_entry,
+    has_page_registry_entry,
+    upsert_page_registry_entry,
+)
 from .config import (
-    ASSET_ROOT_SUFFIX,
-    DOCLING_ASSET_FOLDER,
-    FORMULA_IMAGE_FOLDER,
     IMAGE_PLACEHOLDER,
     IMAGES_SCALE,
-    PAGE_IMAGE_FOLDER,
-    PAGE_MD_FOLDER,
     PAGE_SEPARATOR_TEMPLATE,
-    PICTURE_IMAGE_FOLDER,
-    STITCHED_MARKDOWN_FILE,
-    TABLE_IMAGE_FOLDER,
 )
-
-
-@dataclass(frozen=True)
-class DoclingOutput:
-    """Folders and files produced by raw Docling conversion."""
-
-    docling_assets_dir: Path
-    pages_md_dir: Path
-    stitched_markdown_file: Path
-    page_images_dir: Path
-    picture_images_dir: Path
-    table_images_dir: Path
-    formula_images_dir: Path
+from .io_utils import (
+    DoclingOutput,
+    ensure_docling_folders,
+    get_docling_output_paths,
+    recreate_docling_folders,
+)
 
 
 def cleanup_memory() -> None:
@@ -65,44 +54,6 @@ def get_pdf_page_count(pdf_path: Path) -> int:
     with pdf_path.open("rb") as file:
         reader = PdfReader(file)
         return len(reader.pages)
-
-
-def get_docling_output_paths(
-    pdf_path: str | Path,
-    output_root: str | Path | None = None,
-) -> DoclingOutput:
-    pdf_path = Path(pdf_path).resolve()
-    asset_root = (
-        Path(output_root).resolve()
-        if output_root is not None
-        else pdf_path.parent / f"{pdf_path.stem}{ASSET_ROOT_SUFFIX}"
-    )
-    docling_assets = asset_root / DOCLING_ASSET_FOLDER
-
-    return DoclingOutput(
-        docling_assets_dir=docling_assets,
-        pages_md_dir=docling_assets / PAGE_MD_FOLDER,
-        stitched_markdown_file=docling_assets / STITCHED_MARKDOWN_FILE,
-        page_images_dir=docling_assets / PAGE_IMAGE_FOLDER,
-        picture_images_dir=docling_assets / PICTURE_IMAGE_FOLDER,
-        table_images_dir=docling_assets / TABLE_IMAGE_FOLDER,
-        formula_images_dir=docling_assets / FORMULA_IMAGE_FOLDER,
-    )
-
-
-def recreate_docling_folders(output: DoclingOutput) -> None:
-    if output.docling_assets_dir.exists():
-        shutil.rmtree(output.docling_assets_dir)
-
-    ensure_docling_folders(output)
-
-
-def ensure_docling_folders(output: DoclingOutput) -> None:
-    output.pages_md_dir.mkdir(parents=True, exist_ok=True)
-    output.page_images_dir.mkdir(parents=True, exist_ok=True)
-    output.picture_images_dir.mkdir(parents=True, exist_ok=True)
-    output.table_images_dir.mkdir(parents=True, exist_ok=True)
-    output.formula_images_dir.mkdir(parents=True, exist_ok=True)
 
 
 def build_docling_converter(images_scale: float = IMAGES_SCALE) -> DocumentConverter:
@@ -158,7 +109,15 @@ def collect_raw_assets_from_doc(
     doc: Any,
     output: DoclingOutput,
     counters: Dict[str, int],
-) -> None:
+) -> list[AssetRecord]:
+    records: list[AssetRecord] = []
+    local_counts: dict[tuple[int, str], int] = {}
+
+    def next_local_index(page_no: int, kind: str) -> int:
+        key = (page_no, kind)
+        local_counts[key] = local_counts.get(key, 0) + 1
+        return local_counts[key]
+
     for element, _level in doc.iterate_items():
         provenance = getattr(element, "prov", [])
         page_no = provenance[0].page_no if provenance else None
@@ -174,6 +133,15 @@ def collect_raw_assets_from_doc(
             image_path = output.picture_images_dir / f"picture-{counters['picture']}.png"
             with image_path.open("wb") as file:
                 image.save(file, "PNG")
+            records.append(
+                AssetRecord(
+                    kind="picture",
+                    path=image_path.relative_to(output.docling_assets_dir).as_posix(),
+                    source_page=page_no,
+                    local_index=next_local_index(page_no, "picture"),
+                    global_index=counters["picture"],
+                )
+            )
             continue
 
         if isinstance(element, TableItem):
@@ -185,6 +153,15 @@ def collect_raw_assets_from_doc(
             image_path = output.table_images_dir / f"table-{counters['table']}.png"
             with image_path.open("wb") as file:
                 image.save(file, "PNG")
+            records.append(
+                AssetRecord(
+                    kind="table",
+                    path=image_path.relative_to(output.docling_assets_dir).as_posix(),
+                    source_page=page_no,
+                    local_index=next_local_index(page_no, "table"),
+                    global_index=counters["table"],
+                )
+            )
             continue
 
         is_formula = isinstance(element, FormulaItem) or (
@@ -202,6 +179,17 @@ def collect_raw_assets_from_doc(
         image_path = output.formula_images_dir / f"formula-{counters['formula']}.png"
         with image_path.open("wb") as file:
             image.save(file, "PNG")
+        records.append(
+            AssetRecord(
+                kind="formula",
+                path=image_path.relative_to(output.docling_assets_dir).as_posix(),
+                source_page=page_no,
+                local_index=next_local_index(page_no, "formula"),
+                global_index=counters["formula"],
+            )
+        )
+
+    return records
 
 
 def _existing_asset_count(folder: Path, prefix: str) -> int:
@@ -284,7 +272,7 @@ def convert_pdf_with_docling(
                 end_page,
             )
 
-        if resume and page_file.exists():
+        if resume and page_file.exists() and has_page_registry_entry(output.docling_assets_dir, page_no):
             stitched_parts.append(page_file.read_text(encoding="utf-8").strip())
             cleanup_memory()
             continue
@@ -295,12 +283,22 @@ def convert_pdf_with_docling(
         doc = conversion_result.document
 
         save_page_images(doc, output)
-        collect_raw_assets_from_doc(doc, output, counters)
+        asset_records = collect_raw_assets_from_doc(doc, output, counters)
 
         markdown = export_page_markdown(doc, page_no=page_no).strip()
         page_block = PAGE_SEPARATOR_TEMPLATE.format(page_no=page_no) + markdown + "\n"
 
         page_file.write_text(page_block, encoding="utf-8")
+        upsert_page_registry_entry(
+            output.docling_assets_dir,
+            build_page_registry_entry(
+                page_no=page_no,
+                markdown_path=page_file,
+                docling_assets_dir=output.docling_assets_dir,
+                markdown=page_block,
+                assets=asset_records,
+            ),
+        )
         stitched_parts.append(page_block)
 
         cleanup_memory()
