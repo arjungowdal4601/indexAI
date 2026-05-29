@@ -961,7 +961,11 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
             self.assertEqual(processing_state["status"], "completed")
             self.assertNotIn("main_window_size", processing_state)
             self.assertNotIn("context_window_size", processing_state)
-            self.assertFalse(output.revision_log_path.exists())
+            log_text = output.revision_log_path.read_text(encoding="utf-8")
+            self.assertIn("Target page: 1", log_text)
+            self.assertIn("Added topics:", log_text)
+            self.assertIn("Updated topics:", log_text)
+            self.assertIn("reason:", log_text)
             self.assertFalse(output.validation_report_path.exists())
             self.assertFalse((output_dir / "backups").exists())
             self.assertIn(

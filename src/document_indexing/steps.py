@@ -301,8 +301,20 @@ def build_revision_log_entry(
     )
     next_page = str(window.next_page.page) if window.next_page is not None else "None"
 
-    added_text = "\n".join(f"- {topic}" for topic in added_topics) or "- None"
-    updated_text = "\n".join(f"- {topic}" for topic in updated_topics) or "- None"
+    added_text = (
+        "\n".join(
+            f"- {topic} (reason: no existing topic matched after backward batch search)"
+            for topic in added_topics
+        )
+        or "- None"
+    )
+    updated_text = (
+        "\n".join(
+            f"- {topic} (reason: matched existing topic and merged current page evidence)"
+            for topic in updated_topics
+        )
+        or "- None"
+    )
     warnings_text = (
         "\n".join(f"- {warning}" for warning in validation_report.warnings)
         if validation_report.warnings
@@ -410,16 +422,16 @@ def index_page(
         step_number=next_step_number,
         write_backup=write_diagnostics,
     )
+    revision_log_entry = build_revision_log_entry(
+        step_number=next_step_number,
+        window=window,
+        added_topics=added,
+        updated_topics=updated,
+        validation_report=report,
+    )
+    append_revision_log(output_dir, revision_log_entry)
     if write_diagnostics:
-        revision_log_entry = build_revision_log_entry(
-            step_number=next_step_number,
-            window=window,
-            added_topics=added,
-            updated_topics=updated,
-            validation_report=report,
-        )
         write_validation_report(output_dir, report)
-        append_revision_log(output_dir, revision_log_entry)
     write_processing_state(output_dir, next_state)
 
     if event_callback is not None:
