@@ -85,8 +85,6 @@ class ProcessingState(StrictModel):
     document_id: str
     last_completed_page: int = 0
     next_start_page: int = 1
-    main_window_size: int
-    context_window_size: int
     status: Literal["in_progress", "completed", "failed"] = "in_progress"
     failed_page: int | None = None
     failed_stage: str | None = None

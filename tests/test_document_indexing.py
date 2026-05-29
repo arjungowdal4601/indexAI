@@ -6,9 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from document_indexing import run_document_indexing
-from document_indexing.graph import export_graph_mermaid
 from document_indexing.llm import LangChainTopicIndexingClient
-from document_indexing.nodes import load_state_node, read_manifest_node
 from document_indexing.prompts import (
     DESCRIPTION_UPDATE_PROMPT,
     TOPIC_EXTRACTION_PROMPT,
@@ -20,8 +18,6 @@ from document_indexing.schemas import (
     TopicEntry,
     TopicMatchDecision,
 )
-from document_indexing.routers import route_after_state
-from document_indexing.state import DocumentIndexingState
 from document_indexing.storage import (
     extract_page_assets,
     load_processing_state,
@@ -29,9 +25,11 @@ from document_indexing.storage import (
     read_page_manifest,
     read_page_window,
     topics_for_page,
+    write_processing_state,
     write_topic_index,
 )
 from document_indexing.validator import validate_topic_index
+from document_indexing.schemas import ProcessingState
 
 
 class FakeIndexingClient:
@@ -300,7 +298,7 @@ class DocumentIndexingStorageTests(unittest.TestCase):
             self.assertNotIn("keywords", index_data[0])
             self.assertEqual(backup_data[0]["topic"], "Original")
 
-    def test_load_processing_state_resumes_existing_state(self):
+    def test_load_processing_state_resumes_legacy_state_without_window_config(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
             state_path = output_dir / "processing_state.json"
@@ -321,12 +319,29 @@ class DocumentIndexingStorageTests(unittest.TestCase):
             state = load_processing_state(
                 output_dir=output_dir,
                 document_id="doc-1",
-                main_window_size=3,
-                context_window_size=2,
             )
 
             self.assertEqual(state.next_start_page, 4)
             self.assertEqual(state.status, "in_progress")
+
+    def test_write_processing_state_omits_dead_window_config(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+
+            state_path = write_processing_state(
+                output_dir,
+                ProcessingState(
+                    document_id="doc-1",
+                    last_completed_page=2,
+                    next_start_page=3,
+                    status="in_progress",
+                ),
+            )
+
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["next_start_page"], 3)
+            self.assertNotIn("main_window_size", payload)
+            self.assertNotIn("context_window_size", payload)
 
 
 class DocumentIndexingValidatorTests(unittest.TestCase):
@@ -403,25 +418,27 @@ class DocumentIndexingPromptTests(unittest.TestCase):
         self.assertNotIn("Attention(Q,K,V)", prompt_text)
 
 
-class DocumentIndexingGraphTests(unittest.TestCase):
-    def test_graph_components_are_split_into_readable_modules(self):
-        self.assertEqual(DocumentIndexingState.__name__, "DocumentIndexingState")
-        self.assertTrue(callable(load_state_node))
-        self.assertTrue(callable(read_manifest_node))
-        self.assertTrue(callable(route_after_state))
+class DocumentIndexingPipelineTests(unittest.TestCase):
+    def test_document_indexing_uses_sequential_pipeline_not_graph_modules(self):
+        indexing_dir = Path("src/document_indexing")
+        python_files = [
+            path
+            for path in indexing_dir.glob("*.py")
+            if path.name != "__pycache__"
+        ]
+        combined_source = "\n".join(
+            path.read_text(encoding="utf-8") for path in python_files
+        )
 
-    def test_exports_mermaid_graph_with_langgraph_renderer(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "document_indexing_graph.mmd"
+        self.assertTrue((indexing_dir / "pipeline.py").exists())
+        self.assertTrue((indexing_dir / "steps.py").exists())
+        self.assertFalse((indexing_dir / "graph.py").exists())
+        self.assertFalse((indexing_dir / "routers.py").exists())
+        self.assertFalse((indexing_dir / "state.py").exists())
+        self.assertNotIn("langgraph", combined_source.lower())
+        self.assertNotIn("StateGraph", combined_source)
 
-            export_graph_mermaid(output_path)
-
-            mermaid = output_path.read_text(encoding="utf-8")
-            self.assertIn("load_state", mermaid)
-            self.assertIn("read_manifest", mermaid)
-            self.assertIn("write_outputs", mermaid)
-
-    def test_graph_indexes_adjacent_target_pages_into_one_continuous_topic(self):
+    def test_pipeline_indexes_adjacent_target_pages_into_one_continuous_topic(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             pages_dir = root / "pages_md"
@@ -464,8 +481,7 @@ class DocumentIndexingGraphTests(unittest.TestCase):
                 pages_folder_path=pages_dir,
                 output_folder_path=output_dir,
                 document_id="capital-doc",
-                main_window_size=1,
-                context_window_size=1,
+                include_next_page_context=True,
                 client=FakeIndexingClient(),
                 event_callback=lambda *args: events.append(args),
             )
@@ -499,6 +515,8 @@ class DocumentIndexingGraphTests(unittest.TestCase):
             self.assertNotIn("table_images/table-2.png", json.dumps(topic_index))
             self.assertNotIn("window", topic_index[0])
             self.assertEqual(processing_state["status"], "completed")
+            self.assertNotIn("main_window_size", processing_state)
+            self.assertNotIn("context_window_size", processing_state)
             self.assertIn("Target page: 1", log_text)
             self.assertIn("Target page: 2", log_text)
             self.assertIn("Previous page indexed topics: Neutral policy requirements", log_text)
@@ -530,8 +548,7 @@ class DocumentIndexingGraphTests(unittest.TestCase):
                     pages_folder_path=pages_dir,
                     output_folder_path=output_dir,
                     document_id="capital-doc",
-                    main_window_size=1,
-                    context_window_size=1,
+                    include_next_page_context=True,
                     client=client,
                     event_callback=lambda *args: events.append(args),
                 )

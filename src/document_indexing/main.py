@@ -13,13 +13,12 @@ if __package__ in (None, ""):
         sys.path.insert(0, str(src_dir))
 
 from document_indexing.config import (
-    DEFAULT_CONTEXT_WINDOW_SIZE,
-    DEFAULT_MAIN_WINDOW_SIZE,
+    DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     DEFAULT_PAGES_FOLDER,
     DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
     INDEXING_OUTPUT_FOLDER,
 )
-from document_indexing.graph import run_document_indexing
+from document_indexing.pipeline import run_document_indexing
 from document_indexing.schemas import IndexingOutput
 
 
@@ -45,8 +44,7 @@ def run_indexing_pipeline(
     pages_folder_path: str | Path = DEFAULT_PAGES_FOLDER,
     output_folder_path: str | Path | None = None,
     document_id: str | None = None,
-    main_window_size: int = DEFAULT_MAIN_WINDOW_SIZE,
-    context_window_size: int = DEFAULT_CONTEXT_WINDOW_SIZE,
+    include_next_page_context: bool = DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     token_limit: int = DEFAULT_TOPIC_INDEX_TOKEN_LIMIT,
     event_callback: Callable[[str, str, str, int | None, int | None], None] | None = None,
 ) -> IndexingOutput:
@@ -62,8 +60,7 @@ def run_indexing_pipeline(
         pages_folder_path=pages_folder,
         output_folder_path=output_folder,
         document_id=resolved_document_id,
-        main_window_size=main_window_size,
-        context_window_size=context_window_size,
+        include_next_page_context=include_next_page_context,
         token_limit=token_limit,
         event_callback=event_callback,
     )
@@ -89,14 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Document id stored in processing_state.json.",
     )
     parser.add_argument(
-        "--main-window-size",
-        type=int,
-        default=DEFAULT_MAIN_WINDOW_SIZE,
-    )
-    parser.add_argument(
-        "--context-window-size",
-        type=int,
-        default=DEFAULT_CONTEXT_WINDOW_SIZE,
+        "--no-next-page-context",
+        dest="include_next_page_context",
+        action="store_false",
+        default=DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
+        help="Do not include the following page as extraction-only context.",
     )
     parser.add_argument(
         "--token-limit",
@@ -112,8 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pages_folder_path=args.pages_folder,
         output_folder_path=args.output_folder,
         document_id=args.document_id,
-        main_window_size=args.main_window_size,
-        context_window_size=args.context_window_size,
+        include_next_page_context=args.include_next_page_context,
         token_limit=args.token_limit,
     )
 

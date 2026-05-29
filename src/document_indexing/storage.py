@@ -173,27 +173,20 @@ def _normalize_topic_payload(item: object) -> object:
 def load_processing_state(
     output_dir: str | Path,
     document_id: str,
-    main_window_size: int,
-    context_window_size: int,
 ) -> ProcessingState:
     output_dir = Path(output_dir)
     path = output_dir / PROCESSING_STATE_FILE
     if not path.exists():
-        return ProcessingState(
-            document_id=document_id,
-            main_window_size=main_window_size,
-            context_window_size=context_window_size,
-        )
-    state = ProcessingState.model_validate_json(path.read_text(encoding="utf-8"))
+        return ProcessingState(document_id=document_id)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, dict):
+        payload.pop("main_window_size", None)
+        payload.pop("context_window_size", None)
+    state = ProcessingState.model_validate(payload)
     if state.document_id != document_id:
         raise ValueError(
             f"Processing state document_id mismatch: {state.document_id} != {document_id}"
         )
-    if (
-        state.main_window_size != main_window_size
-        or state.context_window_size != context_window_size
-    ):
-        raise ValueError("Processing state window sizes do not match this run.")
     return state
 
 

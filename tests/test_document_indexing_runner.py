@@ -34,11 +34,28 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 pages_folder_path=pages_dir,
                 output_folder_path=output_dir,
                 document_id="sample",
-                main_window_size=1,
-                context_window_size=1,
+                include_next_page_context=True,
                 token_limit=80000,
                 event_callback=None,
             )
+
+    def test_cli_uses_boolean_next_page_context_option(self):
+        from document_indexing.main import build_parser
+
+        parser = build_parser()
+        default_args = parser.parse_args([])
+        disabled_args = parser.parse_args(["--no-next-page-context"])
+        option_strings = {
+            option
+            for action in parser._actions
+            for option in action.option_strings
+        }
+
+        self.assertTrue(default_args.include_next_page_context)
+        self.assertFalse(disabled_args.include_next_page_context)
+        self.assertIn("--no-next-page-context", option_strings)
+        self.assertNotIn("--main-window-size", option_strings)
+        self.assertNotIn("--context-window-size", option_strings)
 
 
 if __name__ == "__main__":
