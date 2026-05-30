@@ -286,13 +286,41 @@ class FrontendContractTests(unittest.TestCase):
             ],
         )
 
-    def test_copilot_page_uses_clean_tabs_without_debug_or_bundle(self):
+    def test_copilot_page_uses_chat_ui_without_retrieval_controls(self):
         source = Path("frontend/pages/4_Copilot.py").read_text(encoding="utf-8")
 
-        self.assertIn('["Route", "Pages", "Memory", "Answer"]', source)
+        self.assertIn('configure_page("IndexAI Co-pilot")', source)
+        self.assertIn("st.chat_message", source)
+        self.assertIn("st.chat_input", source)
+        self.assertIn("copilot_messages", source)
+        self.assertIn("selected_copilot_document_id", source)
         self.assertIn("select any indexed document", source.lower())
+        self.assertNotIn("st.tabs", source)
+        self.assertNotIn("st.number_input", source)
+        self.assertNotIn("Max direct pages", source)
+        self.assertNotIn("Max direct estimated tokens", source)
+        self.assertNotIn("Retrieval trace", source)
+        self.assertNotIn("Memory mode", source)
         self.assertNotIn("Debug", source)
         self.assertNotIn("thought-analysis " + "bundle", source.lower())
+
+    def test_copilot_page_uses_internal_defaults_and_markdown_answer(self):
+        source = Path("frontend/pages/4_Copilot.py").read_text(encoding="utf-8")
+
+        self.assertIn("max_direct_pages=5", source)
+        self.assertIn("max_direct_estimated_tokens=70000", source)
+        self.assertIn("st.markdown", source)
+        self.assertIn("I could not find a grounded answer in the selected document.", source)
+        self.assertIn("result.get(\"selected_pages\")", source)
+
+    def test_copilot_sources_are_compact_with_images_in_expander(self):
+        source = Path("frontend/pages/4_Copilot.py").read_text(encoding="utf-8")
+
+        self.assertIn("Sources:", source)
+        self.assertIn("p.{page}", source)
+        self.assertIn('st.expander("Show source page images", expanded=False)', source)
+        self.assertIn("api_client.page_image_path", source)
+        self.assertIn("st.image", source)
 
     def test_latest_progress_splits_processing_and_indexing_events(self):
         from frontend.ui_components import latest_progress
