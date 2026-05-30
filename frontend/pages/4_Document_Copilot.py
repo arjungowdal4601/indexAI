@@ -66,11 +66,11 @@ def main() -> None:
 
     result = st.session_state.get("last_copilot_result")
     if not result:
-        st.info("Select any indexed regulatory or SOP document and ask a question.")
+        st.info("Select any indexed document and ask a question.")
         return
 
-    route_tab, pages_tab, memory_tab, answer_tab, bundle_tab = st.tabs(
-        ["Route", "Pages", "Memory", "Answer", "Thought Analysis Bundle"]
+    route_tab, pages_tab, memory_tab, answer_tab, debug_tab = st.tabs(
+        ["Route", "Pages", "Memory", "Answer", "Debug"]
     )
     with route_tab:
         st.json(result.get("routing_decision") or {})
@@ -90,8 +90,8 @@ def main() -> None:
             st.json(result["compressed_evidence"])
     with answer_tab:
         _render_answer(result)
-    with bundle_tab:
-        st.caption("Copy this bundle for retrieval thought analysis and answer review.")
+    with debug_tab:
+        st.caption("Copy this response payload for retrieval review.")
         st.code(format_json(result), language="json")
 
 

@@ -165,7 +165,7 @@ def _normalize_topic_payload(item: object) -> object:
     if not isinstance(item, dict):
         return item
     normalized = dict(item)
-    # Older saved indexes used keywords; retrieval/comparison still need to read them.
+    # Older saved indexes used keywords; retrieval still needs to read them.
     normalized.pop("keywords", None)
     normalized.setdefault("assets", [])
     return normalized

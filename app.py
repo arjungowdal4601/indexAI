@@ -1,10 +1,10 @@
-"""Compatibility notice for the active framework UI."""
+"""Compatibility notice for the active IndexAI UI."""
 
 from __future__ import annotations
 
 
 def main() -> int:
-    print("Active UI: streamlit run frontend/streamlit_app.py")
+    print("IndexAI UI: streamlit run frontend/streamlit_app.py")
     return 0
 
 

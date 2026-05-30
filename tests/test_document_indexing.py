@@ -199,6 +199,49 @@ class BatchMatchingClient:
 
 
 class DocumentIndexingStorageTests(unittest.TestCase):
+    def test_agent_memory_guide_builder_writes_agent_first_retrieval_contract(self):
+        from document_indexing.agent_guide import build_agent_memory_guide
+
+        guide = build_agent_memory_guide(
+            document_id="doc_000001",
+            filename="handbook.pdf",
+            total_pages=7,
+            topic_index=[
+                TopicEntry(
+                    topic="Capital controls",
+                    pages=[1, 2, 3, 7],
+                    description="Explains capital controls and reporting thresholds.",
+                    assets=[],
+                )
+            ],
+            manifest={
+                "topic_index_path": "indexing_output/topic_index.json",
+                "agent_md_path": "indexing_output/agent.md",
+                "enriched_pages_folder": "enriched_doc/pages_md",
+                "page_images_folder": "page_images",
+            },
+        )
+
+        self.assertIn("# Agent Memory Guide", guide)
+        self.assertIn("- document_id: doc_000001", guide)
+        self.assertIn("- filename: handbook.pdf", guide)
+        self.assertIn("- total pages: 7", guide)
+        self.assertIn("Read `indexing_output/topic_index.json` first.", guide)
+        self.assertIn("Do not read the whole document by default.", guide)
+        self.assertIn(
+            "Read only `enriched_doc/pages_md/page_XXXX.md` for those pages.",
+            guide,
+        )
+        self.assertIn("- topic index: `indexing_output/topic_index.json`", guide)
+        self.assertIn("- agent guide: `indexing_output/agent.md`", guide)
+        self.assertIn("- enriched pages folder: `enriched_doc/pages_md`", guide)
+        self.assertIn("- page images folder: `page_images`", guide)
+        self.assertIn(
+            "- Capital controls | pages 1-3, 7 | Explains capital controls and reporting thresholds.",
+            guide,
+        )
+        self.assertIn("no direct indexed match was found", guide)
+
     def test_manifest_sorts_pages_and_reports_missing_pages(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             pages_dir = Path(temp_dir)
@@ -926,6 +969,7 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
                 pages_folder_path=pages_dir,
                 output_folder_path=output_dir,
                 document_id="capital-doc",
+                original_filename="capital.pdf",
                 include_next_page_context=True,
                 client=FakeIndexingClient(),
                 event_callback=lambda *args: events.append(args),
@@ -933,6 +977,7 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
 
             topic_index = json.loads(output.topic_index_path.read_text())
             processing_state = json.loads(output.processing_state_path.read_text())
+            agent_guide = output.agent_md_path.read_text(encoding="utf-8")
 
             self.assertEqual(len(topic_index), 2)
             self.assertEqual(topic_index[0]["topic"], "Neutral policy requirements")
@@ -968,6 +1013,12 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
             self.assertIn("reason:", log_text)
             self.assertFalse(output.validation_report_path.exists())
             self.assertFalse((output_dir / "backups").exists())
+            self.assertTrue(output.agent_md_path.exists())
+            self.assertIn("- document_id: capital-doc", agent_guide)
+            self.assertIn("- filename: capital.pdf", agent_guide)
+            self.assertIn("- total pages: 3", agent_guide)
+            self.assertIn("Read `indexing_output/topic_index.json` first.", agent_guide)
+            self.assertIn("Do not read the whole document by default.", agent_guide)
             self.assertIn(
                 ("document_indexing", "indexing_page", "Indexing page 1 of 3", 1, 3),
                 events,

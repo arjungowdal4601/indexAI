@@ -77,7 +77,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = Path(temp_dir) / "sample.pdf"
             pdf_path.write_bytes(b"%PDF-1.4\n")
-            output_root = Path(temp_dir) / "storage" / "documents" / "sop" / "sop_000001"
+            output_root = Path(temp_dir) / "storage" / "documents" / "doc_000001"
             docling_assets_dir = output_root / "docling_assets"
             pages_md_dir = docling_assets_dir / "pages_md"
             enriched_doc_dir = output_root / "enriched_doc"
@@ -157,7 +157,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = Path(temp_dir) / "sample.pdf"
             pdf_path.write_bytes(b"%PDF-1.4\n")
-            output_root = Path(temp_dir) / "storage" / "documents" / "sop" / "sop_000001"
+            output_root = Path(temp_dir) / "storage" / "documents" / "doc_000001"
             docling_assets_dir = output_root / "docling_assets"
             pages_md_dir = docling_assets_dir / "pages_md"
             pages_md_dir.mkdir(parents=True)
@@ -178,14 +178,14 @@ class PipelineTests(unittest.TestCase):
                     run_document_processing(
                         pdf_path,
                         output_root=output_root,
-                        document_id="sop_000001",
+                        document_id="doc_000001",
                         resume=True,
                     )
 
             state_path = output_root / "state" / "document_processing_state.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(state["document_id"], "sop_000001")
+        self.assertEqual(state["document_id"], "doc_000001")
         self.assertEqual(state["status"], "failed")
         self.assertEqual(state["phase"], "enrichment")
         self.assertEqual(state["failed_pages"][0]["page"], 1)
@@ -195,7 +195,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             pdf_path = Path(temp_dir) / "sample.pdf"
             pdf_path.write_bytes(b"%PDF-1.4\n")
-            output_root = Path(temp_dir) / "storage" / "documents" / "sop" / "sop_000001"
+            output_root = Path(temp_dir) / "storage" / "documents" / "doc_000001"
             docling_assets_dir = output_root / "docling_assets"
             pages_md_dir = docling_assets_dir / "pages_md"
             enriched_doc_dir = output_root / "enriched_doc"
@@ -221,7 +221,7 @@ class PipelineTests(unittest.TestCase):
                 run_document_processing(
                     pdf_path,
                     output_root=output_root,
-                    document_id="sop_000001",
+                    document_id="doc_000001",
                     resume=True,
                 )
 

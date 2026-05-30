@@ -21,6 +21,7 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 processing_state_path=output_dir / "processing_state.json",
                 revision_log_path=output_dir / "revision_log.md",
                 validation_report_path=output_dir / "validation_report.json",
+                agent_md_path=output_dir / "agent.md",
             )
 
             with patch(
@@ -34,6 +35,7 @@ class DocumentIndexingRunnerTests(unittest.TestCase):
                 pages_folder_path=pages_dir,
                 output_folder_path=output_dir,
                 document_id="sample",
+                original_filename=None,
                 include_next_page_context=True,
                 topic_match_batch_size=10,
                 write_diagnostics=False,

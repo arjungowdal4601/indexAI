@@ -6,7 +6,6 @@ from fastapi import BackgroundTasks, HTTPException
 
 from backend.schemas import JobResponse
 from backend.services import (
-    artifact_retention_service,
     document_service,
     indexing_service,
     job_event_service,
@@ -34,7 +33,7 @@ def start_prepare_job(document_id: str, background_tasks: BackgroundTasks) -> Jo
     if (
         document.get("processing_status") == "completed"
         and document.get("indexing_status") == "completed"
-        and document.get("ready_for_comparison", "").lower() == "true"
+        and document.get("indexed", "").lower() == "true"
     ):
         raise HTTPException(status_code=400, detail="Document is already indexed.")
 
@@ -58,7 +57,7 @@ def start_prepare_job(document_id: str, background_tasks: BackgroundTasks) -> Jo
                 if document["indexing_status"] == "completed"
                 else "not_started"
             ),
-            "ready_for_comparison": "false",
+            "indexed": "false",
             "active_job_id": job.job_id,
             "error_message": "",
         }
@@ -86,11 +85,10 @@ def prepare_document_job(job_id: str, document_id: str) -> None:
             indexing_service.run_indexing_for_document(job_id, document_id)
 
         document = document_service.get_document_or_404(document_id)
-        artifact_retention_service.cleanup_document_artifacts(document_id)
         registry.upsert_document(
             {
                 **document,
-                "ready_for_comparison": "true",
+                "indexed": "true",
                 "active_job_id": job_id,
                 "error_message": "",
             }
@@ -114,7 +112,7 @@ def prepare_document_job(job_id: str, document_id: str) -> None:
                 {
                     **document,
                     **phase_updates,
-                    "ready_for_comparison": "false",
+                    "indexed": "false",
                     "active_job_id": job_id,
                     "error_message": str(exc),
                 }

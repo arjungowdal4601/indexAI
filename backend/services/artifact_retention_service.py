@@ -1,4 +1,4 @@
-"""Artifact retention cleanup for processed documents and comparisons."""
+"""Artifact retention cleanup for processed documents."""
 
 from __future__ import annotations
 
@@ -25,33 +25,6 @@ DOCUMENT_MINIMAL_DELETE_PATHS = [
     "indexing_output/revision_log.md",
     "indexing_output/backups",
 ]
-
-COMPARISON_INTERMEDIATE_DIRS = [
-    "plans",
-    "item_results",
-    "traces",
-    "evidence",
-    "page_results",
-    "cache",
-    "regulatory_evidence",
-    "compressed_evidence",
-]
-
-COMPARISON_STANDARD_DELETE_PATHS = [
-    *COMPARISON_INTERMEDIATE_DIRS,
-    "reports/gap_report.json",
-    "reports/gap_report.md",
-]
-
-COMPARISON_MINIMAL_DELETE_PATHS = [
-    *COMPARISON_INTERMEDIATE_DIRS,
-    "final_report.md",
-    "final_report.csv",
-    "reports",
-]
-
-THOUGHT_ANALYSIS_BUNDLE_FILE = "thought_analysis_bundle.json"
-
 
 def _relative_path(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
@@ -143,80 +116,3 @@ def cleanup_document_artifacts(document_id: str) -> dict:
         "deleted": manifest["deleted_artifacts"],
         "moved": manifest.get("moved_artifacts", []),
     }
-
-
-def cleanup_comparison_artifacts(comparison_id: str) -> dict:
-    root = registry.comparison_root(comparison_id)
-    mode = config.get_artifact_retention_mode()
-    deleted: list[str] = []
-
-    if mode == "standard":
-        delete_paths = COMPARISON_STANDARD_DELETE_PATHS
-    elif mode == "minimal":
-        delete_paths = COMPARISON_MINIMAL_DELETE_PATHS
-    else:
-        delete_paths = []
-
-    for relative_path in delete_paths:
-        removed = _delete_path(root, relative_path)
-        if removed is not None:
-            deleted.append(removed)
-
-    cleanup_completed_at = registry.utc_now()
-    kept = _comparison_kept_paths(root, mode)
-    payload = {
-        "comparison_id": comparison_id,
-        "mode": mode,
-        "cleanup_completed_at": cleanup_completed_at,
-        "kept": kept,
-        "deleted": sorted(set(deleted)),
-    }
-    _write_json(root / "artifact_cleanup.json", payload)
-    _update_analysis_bundle_cleanup_metadata(root, payload)
-    return payload
-
-
-def _comparison_kept_paths(root: Path, mode: str) -> list[str]:
-    if mode == "minimal":
-        candidates = [
-            "comparison_request.json",
-            "page_reports",
-            "final_report.json",
-            THOUGHT_ANALYSIS_BUNDLE_FILE,
-            "state",
-            "logs",
-            "artifact_cleanup.json",
-        ]
-    else:
-        candidates = [
-            "comparison_request.json",
-            "page_reports",
-            "final_report.json",
-            "final_report.md",
-            "final_report.csv",
-            THOUGHT_ANALYSIS_BUNDLE_FILE,
-            "reports/executive_summary.md",
-            "state",
-            "logs",
-            "artifact_cleanup.json",
-        ]
-    return [path for path in candidates if (root / path).exists() or path == "artifact_cleanup.json"]
-
-
-def _update_analysis_bundle_cleanup_metadata(root: Path, cleanup_payload: dict) -> None:
-    bundle_path = root / THOUGHT_ANALYSIS_BUNDLE_FILE
-    if not bundle_path.exists():
-        return
-    try:
-        payload = json.loads(bundle_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return
-    if not isinstance(payload, dict):
-        return
-    payload["artifact_cleanup"] = cleanup_payload
-    missing = payload.get("missing_debug_artifacts")
-    if isinstance(missing, list):
-        payload["missing_debug_artifacts"] = [
-            item for item in missing if item != "artifact_cleanup.json"
-        ]
-    _write_json(bundle_path, payload)

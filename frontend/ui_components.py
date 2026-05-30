@@ -15,14 +15,6 @@ STATUS_COLORS = {
     "queued": "#8a5a00",
     "failed": "#b42318",
     "not_started": "#667085",
-    "compliant": "#1b7f3a",
-    "partial": "#9a6700",
-    "partially_compliant": "#9a6700",
-    "major_gaps": "#b42318",
-    "missing": "#b42318",
-    "conflicting": "#b42318",
-    "needs_human_review": "#6941c6",
-    "not_applicable": "#667085",
 }
 PROCESSING_BLUE = "#2f80ed"
 INDEXING_GREEN = "#27ae60"
@@ -73,11 +65,10 @@ def document_table(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             "Document ID": item["document_id"],
-            "Type": item["document_type"],
             "Filename": item["filename"],
             "Processing": item["processing_status"],
             "Indexing": item["indexing_status"],
-            "Ready": item["ready_for_comparison"],
+            "Indexed": item["indexed"],
             "Pages": item.get("page_count") or "",
             "Active Job": item.get("active_job_id") or "",
             "Error": item.get("error_message") or "",
@@ -86,16 +77,11 @@ def document_table(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def ready_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [item for item in documents if item.get("ready_for_comparison")]
-
-
 def indexed_documents(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         item
         for item in documents
-        if item.get("processing_status") == "completed"
-        and item.get("indexing_status") == "completed"
+        if item.get("processing_status") == "completed" and item.get("indexed")
     ]
 
 
@@ -103,20 +89,6 @@ def document_option(document: dict[str, Any]) -> str:
     page_count = document.get("page_count")
     pages = f", {page_count} pages" if page_count else ""
     return f"{document['document_id']} - {document['filename']}{pages}"
-
-
-def page_numbers_from_report(report: dict[str, Any]) -> list[int]:
-    page_results = report.get("page_results") or report.get("page_reports") or []
-    pages = []
-    for item in page_results:
-        page = item.get("sop_page")
-        if page is not None:
-            pages.append(int(page))
-    return sorted(set(pages))
-
-
-def report_summary(report: dict[str, Any]) -> dict[str, Any]:
-    return report.get("summary") or report.get("counts") or {}
 
 
 def format_json(value: Any) -> str:
@@ -166,13 +138,6 @@ def colored_progress(label: str, current: int, total: int, color: str) -> None:
     )
 
 
-def _safe_progress_value(value: object) -> float:
-    try:
-        return max(0.0, min(1.0, float(value)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _event_kind(event: dict[str, Any]) -> str:
     text = f"{event.get('step', '')} {event.get('message', '')}".lower()
     if "failed" in text:
@@ -198,7 +163,7 @@ def _friendly_event_message(event: dict[str, Any]) -> str:
 
 @_fragment(run_every="2s")
 def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str | None) -> None:
-    if not job_id and not document.get("ready_for_comparison"):
+    if not job_id and not document.get("indexed"):
         return
     job = None
     events: list[dict[str, Any]] = []
@@ -212,7 +177,7 @@ def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str
 
     fallback_total = int(document.get("page_count") or 0)
     processing_done = document.get("processing_status") == "completed"
-    indexing_done = document.get("indexing_status") == "completed" or document.get("ready_for_comparison")
+    indexing_done = document.get("indexing_status") == "completed" or document.get("indexed")
     processing_current, processing_total = latest_progress(
         events,
         "document_processing",
@@ -250,73 +215,6 @@ def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str
             st.caption(latest_message)
     if job and job.get("status") == "failed":
         st.error(job.get("error_message") or "Prepare job failed.")
-
-
-@_fragment(run_every="2s")
-def render_comparison_progress(base_url: str, comparison_id: str | None) -> None:
-    if not comparison_id:
-        return
-    progress = run_api_call(
-        "Load comparison progress",
-        lambda: api_client.get_comparison_progress(comparison_id, base_url),
-    )
-    if not progress:
-        return
-
-    status = progress.get("status", "queued")
-    st.subheader("Comparison")
-    st.caption(f"Comparison ID: {comparison_id}")
-    state = "complete" if status == "completed" else "error" if status == "failed" else "running"
-    label = (
-        "Comparison complete"
-        if status == "completed"
-        else "Comparison failed"
-        if status == "failed"
-        else "Comparison running"
-    )
-    with st.status(label, state=state, expanded=status in {"queued", "running"}) as status_box:
-        st.markdown(f"Status: {status_badge(status)}", unsafe_allow_html=True)
-
-        message = progress.get("message") or "Comparison status unavailable."
-        message_event = {"step": progress.get("current_step") or "", "message": message}
-        message_kind = _event_kind(message_event)
-        # Explicit strings kept here for contract checks: waiting_for_llm, retry, failed.
-        if status in {"queued", "running"}:
-            if message_kind == "retry":
-                st.warning(_friendly_event_message(message_event))
-            elif message_kind == "failed":
-                st.error(_friendly_event_message(message_event))
-            else:
-                st.info(_friendly_event_message(message_event))
-            progress_percent = progress.get("progress_percent")
-            current = progress.get("progress_current")
-            total = progress.get("progress_total")
-            if progress_percent is not None and current is not None and total:
-                st.progress(
-                    _safe_progress_value(progress_percent),
-                    text=f"{current} / {total} SOP pages",
-                )
-            else:
-                st.progress(0.05, text="Waiting for SOP-page progress...")
-        elif status == "completed":
-            status_box.update(label="Comparison complete", state="complete", expanded=False)
-            st.success("Comparison complete. Open Review Report to inspect findings.")
-            st.progress(1.0, text="Completed")
-        elif status == "failed":
-            status_box.update(label="Comparison failed", state="error", expanded=True)
-            st.error(progress.get("error_message") or message or "Comparison failed.")
-        else:
-            st.warning(f"Comparison status: {status or 'unknown'}")
-
-        with st.expander("Show comparison steps", expanded=False):
-            for event in progress.get("events", [])[-25:]:
-                event_message = _friendly_event_message(event)
-                current = event.get("progress_current")
-                total = event.get("progress_total")
-                if current is not None and total is not None:
-                    st.write(f"{event_message} ({current}/{total})")
-                else:
-                    st.write(event_message)
 
 
 @_fragment(run_every="2s")

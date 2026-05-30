@@ -15,7 +15,12 @@ from backend.services import (
     job_service,
     registry,
 )
+from document_indexing.agent_guide import write_agent_memory_guide
 from document_indexing.main import run_indexing_pipeline
+
+
+TOPIC_INDEX_RELATIVE_PATH = "indexing_output/topic_index.json"
+AGENT_MD_RELATIVE_PATH = "indexing_output/agent.md"
 
 
 def start_indexing_job(document_id: str, background_tasks: BackgroundTasks) -> JobResponse:
@@ -35,7 +40,7 @@ def start_indexing_job(document_id: str, background_tasks: BackgroundTasks) -> J
         {
             **document,
             "indexing_status": "queued",
-            "ready_for_comparison": "false",
+            "indexed": "false",
             "active_job_id": job.job_id,
             "error_message": "",
         }
@@ -56,7 +61,7 @@ def index_document_job(job_id: str, document_id: str) -> None:
                 {
                     **document,
                     "indexing_status": "failed",
-                    "ready_for_comparison": "false",
+                    "indexed": "false",
                     "active_job_id": job_id,
                     "error_message": str(exc),
                 }
@@ -98,7 +103,7 @@ def run_indexing_for_document(job_id: str, document_id: str) -> None:
         {
             **document,
             "indexing_status": "running",
-            "ready_for_comparison": "false",
+            "indexed": "false",
             "active_job_id": job_id,
             "error_message": "",
         }
@@ -123,6 +128,7 @@ def run_indexing_for_document(job_id: str, document_id: str) -> None:
         pages_folder_path=asset_root / "enriched_doc" / "pages_md",
         output_folder_path=asset_root / "indexing_output",
         document_id=document_id,
+        original_filename=document.get("original_filename"),
         event_callback=_event_callback(job_id),
     )
     job_event_service.append_event(
@@ -134,27 +140,34 @@ def run_indexing_for_document(job_id: str, document_id: str) -> None:
     if not Path(output.topic_index_path).exists():
         raise FileNotFoundError(f"Topic index not found after indexing: {output.topic_index_path}")
     current = document_service.get_document_or_404(document_id)
-    document_service.update_manifest_topic_index(
+    document_service.update_manifest_indexing_artifacts(
         current,
-        "indexing_output/topic_index.json",
+        topic_index_path=TOPIC_INDEX_RELATIVE_PATH,
+        agent_md_path=AGENT_MD_RELATIVE_PATH,
     )
+    artifact_retention_service.cleanup_document_artifacts(document_id)
+    current = document_service.get_document_or_404(document_id)
+    write_agent_memory_guide(
+        output_dir=asset_root / "indexing_output",
+        document_id=document_id,
+        original_filename=current.get("original_filename"),
+        topic_index_path=Path(output.topic_index_path),
+        manifest_path=document_service.manifest_path(current),
+    )
+    if not Path(output.agent_md_path).exists():
+        raise FileNotFoundError(f"Agent guide not found after indexing: {output.agent_md_path}")
     registry.upsert_document(
         {
             **current,
             "indexing_status": "completed",
-            "ready_for_comparison": "true",
+            "indexed": "true",
             "active_job_id": job_id,
             "error_message": "",
         }
     )
-    artifact_retention_service.cleanup_document_artifacts(document_id)
     job_event_service.append_event(
         job_id,
         stage="document_indexing",
         step="completed",
-        message=f"Indexed {document_id}; document is ready for comparison and co-pilot.",
+        message=f"Indexed {document_id}; document memory is ready for retrieval.",
     )
-
-
-# Backward-compatible name for older tests or callers.
-index_regulatory_job = index_document_job

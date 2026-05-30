@@ -1,4 +1,4 @@
-"""Upload, process, and index documents."""
+"""Upload, process, and index one document at a time."""
 
 from __future__ import annotations
 
@@ -14,19 +14,17 @@ from frontend.ui_components import (
 )
 
 
-def upload_panel(document_type: str, base_url: str) -> None:
-    title = "Regulatory Documents" if document_type == "regulatory" else "SOP Documents"
-    st.subheader(title)
+def upload_panel(base_url: str) -> None:
+    st.subheader("Document Upload")
     uploaded = st.file_uploader(
-        f"Upload {document_type} PDF",
+        "Upload PDF",
         type=["pdf"],
-        key=f"upload-{document_type}",
+        key="upload-document",
     )
-    if st.button(f"Upload {title[:-1]}", key=f"upload-button-{document_type}", disabled=uploaded is None):
+    if st.button("Upload Document", key="upload-button-document", disabled=uploaded is None):
         result = run_api_call(
             "Upload document",
             lambda: api_client.upload_document(
-                document_type=document_type,
                 filename=uploaded.name,
                 content=uploaded.getvalue(),
                 base_url=base_url,
@@ -43,13 +41,13 @@ def render_document_actions(document: dict, base_url: str) -> None:
     cols[0].write(document["document_id"])
     cols[1].write(document["processing_status"])
     cols[2].write(document["indexing_status"])
-    cols[3].write("Ready" if document.get("ready_for_comparison") else "Not ready")
+    cols[3].write("Indexed" if document.get("indexed") else "Not indexed")
     with cols[4]:
         running = (
             document["processing_status"] in {"queued", "running"}
             or document["indexing_status"] in {"queued", "running"}
         )
-        ready = bool(document.get("ready_for_comparison"))
+        ready = bool(document.get("indexed"))
         failed = (
             document["processing_status"] == "failed"
             or document["indexing_status"] == "failed"
@@ -57,7 +55,7 @@ def render_document_actions(document: dict, base_url: str) -> None:
         if ready:
             st.write("Indexed")
         else:
-            label = "Retry Index" if failed else "Index"
+            label = "Retry Index" if failed else "Process and Index"
             if st.button(label, key=f"prepare-{document['document_id']}", disabled=running):
                 job = run_api_call(
                     "Start prepare",
@@ -74,10 +72,10 @@ def render_document_actions(document: dict, base_url: str) -> None:
     render_prepare_progress(base_url, document, job_id)
 
 
-def document_list(document_type: str, base_url: str) -> None:
+def document_list(base_url: str) -> None:
     result = run_api_call(
         "Load documents",
-        lambda: api_client.list_documents(document_type, base_url),
+        lambda: api_client.list_documents(base_url),
     )
     documents = result.get("documents", []) if result else []
     if documents:
@@ -86,20 +84,15 @@ def document_list(document_type: str, base_url: str) -> None:
         for document in documents:
             render_document_actions(document, base_url)
     else:
-        st.info(f"No {document_type} documents uploaded yet.")
+        st.info("No documents uploaded yet.")
 
 
 def main() -> None:
     configure_page("Upload and Prepare")
     base_url = api_base_url_input()
 
-    left, right = st.columns(2)
-    with left:
-        upload_panel("regulatory", base_url)
-        document_list("regulatory", base_url)
-    with right:
-        upload_panel("sop", base_url)
-        document_list("sop", base_url)
+    upload_panel(base_url)
+    document_list(base_url)
 
 
 if __name__ == "__main__":

@@ -44,6 +44,7 @@ def run_indexing_pipeline(
     pages_folder_path: str | Path = DEFAULT_PAGES_FOLDER,
     output_folder_path: str | Path | None = None,
     document_id: str | None = None,
+    original_filename: str | None = None,
     include_next_page_context: bool = DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
     write_diagnostics: bool = False,
@@ -61,6 +62,7 @@ def run_indexing_pipeline(
         pages_folder_path=pages_folder,
         output_folder_path=output_folder,
         document_id=resolved_document_id,
+        original_filename=original_filename,
         include_next_page_context=include_next_page_context,
         topic_match_batch_size=topic_match_batch_size,
         write_diagnostics=write_diagnostics,
@@ -122,6 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print("DOCUMENT INDEXING COMPLETE")
     print(f"Topic index JSON: {output.topic_index_path}")
+    print(f"Agent memory guide: {output.agent_md_path}")
     print(f"Processing state JSON: {output.processing_state_path}")
     print(f"Diagnostic revision log path: {output.revision_log_path}")
     print(f"Diagnostic validation report path: {output.validation_report_path}")

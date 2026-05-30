@@ -48,7 +48,7 @@ class RetryUtilsTests(unittest.TestCase):
     def test_job_event_waiting_and_retry_helpers_write_events(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job_id = "job_000001"
-            with patch.dict("os.environ", {"DOC_COMPARING_STORAGE_ROOT": temp_dir}):
+            with patch.dict("os.environ", {"INDEXAI_STORAGE_ROOT": temp_dir}):
                 job_event_service.append_waiting_for_llm(
                     job_id,
                     stage="document_indexing",

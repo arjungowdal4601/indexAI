@@ -1,1 +1,1 @@
-"""FastAPI backend for the document comparison framework."""
+"""FastAPI backend for IndexAI."""

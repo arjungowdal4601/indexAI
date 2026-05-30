@@ -9,11 +9,11 @@ param(
 
 if ($Help) {
     Write-Host @"
-Run the document comparison backend and Streamlit frontend.
+Run the IndexAI backend and Streamlit frontend.
 
 Usage:
-  .\run_comparison_app.ps1
-  .\run_comparison_app.ps1 -CondaEnv compute -BackendPort 8000 -FrontendPort 8501
+  .\run_indexai_app.ps1
+  .\run_indexai_app.ps1 -CondaEnv compute -BackendPort 8000 -FrontendPort 8501
 
 Options:
   -CondaEnv      Conda environment name. Default: "compute"
@@ -67,9 +67,9 @@ if (-not $SkipDependencyInstall) {
 }
 
 $env:PYTHONPATH = $SrcPath
-$env:DOC_COMPARING_API_BASE_URL = $BackendUrl
+$env:INDEXAI_API_BASE_URL = $BackendUrl
 
-Write-Host "Starting document comparison app"
+Write-Host "Starting IndexAI app"
 Write-Host "Repo:      $Root"
 Write-Host "Conda env: $CondaEnv"
 Write-Host "Backend:   $BackendUrl"
@@ -81,7 +81,7 @@ Write-Host ""
 $jobs = @()
 
 try {
-    $backendJob = Start-Job -Name "doc-comparing-backend" -ScriptBlock {
+    $backendJob = Start-Job -Name "indexai-backend" -ScriptBlock {
         param($Root, $CondaEnv, $HostAddress, $BackendPort, $SrcPath)
         Set-Location $Root
         $env:PYTHONPATH = $SrcPath
@@ -91,11 +91,11 @@ try {
 
     Start-Sleep -Seconds 2
 
-    $frontendJob = Start-Job -Name "doc-comparing-frontend" -ScriptBlock {
+    $frontendJob = Start-Job -Name "indexai-frontend" -ScriptBlock {
         param($Root, $CondaEnv, $HostAddress, $FrontendPort, $SrcPath, $BackendUrl)
         Set-Location $Root
         $env:PYTHONPATH = $SrcPath
-        $env:DOC_COMPARING_API_BASE_URL = $BackendUrl
+        $env:INDEXAI_API_BASE_URL = $BackendUrl
         conda run -n $CondaEnv python -m streamlit run frontend/streamlit_app.py --server.address $HostAddress --server.port $FrontendPort --browser.gatherUsageStats false 2>&1
     } -ArgumentList $Root, $CondaEnv, $HostAddress, $FrontendPort, $SrcPath, $BackendUrl
     $jobs += $frontendJob

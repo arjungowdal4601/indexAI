@@ -38,7 +38,7 @@ def start_processing_job(document_id: str, background_tasks: BackgroundTasks) ->
                 if document["processing_status"] == "failed"
                 else "queued"
             ),
-            "ready_for_comparison": "false",
+            "indexed": "false",
             "active_job_id": job.job_id,
             "error_message": "",
         }
@@ -59,7 +59,7 @@ def process_document_job(job_id: str, document_id: str) -> None:
                 {
                     **document,
                     "processing_status": "failed",
-                    "ready_for_comparison": "false",
+                    "indexed": "false",
                     "active_job_id": job_id,
                     "error_message": str(exc),
                 }
@@ -100,7 +100,7 @@ def run_processing_for_document(job_id: str, document_id: str) -> None:
         {
             **document,
             "processing_status": "running",
-            "ready_for_comparison": "false",
+            "indexed": "false",
             "active_job_id": job_id,
             "error_message": "",
         }
@@ -130,13 +130,13 @@ def run_processing_for_document(job_id: str, document_id: str) -> None:
 
     current = document_service.get_document_or_404(document_id)
     indexing_status = current.get("indexing_status") or "not_started"
-    ready = "true" if indexing_status == "completed" else "false"
+    indexed = "true" if indexing_status == "completed" else "false"
     registry.upsert_document(
         {
             **current,
             "processing_status": "completed",
             "indexing_status": indexing_status,
-            "ready_for_comparison": ready,
+            "indexed": indexed,
             "page_count": str(total_pages),
             "active_job_id": job_id,
             "error_message": "",
@@ -146,7 +146,7 @@ def run_processing_for_document(job_id: str, document_id: str) -> None:
         job_id,
         stage="document_processing",
         step="completed",
-        message=f"Processed {total_pages} page(s). Indexing is required before comparison.",
+        message=f"Processed {total_pages} page(s). Indexing is required before document memory is ready.",
         progress_current=total_pages,
         progress_total=total_pages,
     )

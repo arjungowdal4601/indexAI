@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
-API_BASE_URL_ENV = "DOC_COMPARING_API_BASE_URL"
+API_BASE_URL_ENV = "INDEXAI_API_BASE_URL"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
@@ -90,11 +90,10 @@ def health(base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", "/health", base_url=base_url)
 
 
-def list_documents(document_type: str | None = None, base_url: str | None = None) -> dict[str, Any]:
+def list_documents(base_url: str | None = None) -> dict[str, Any]:
     return _request_json(
         "GET",
         "/documents",
-        query={"document_type": document_type},
         base_url=base_url,
     )
 
@@ -128,87 +127,6 @@ def get_job_events(job_id: str, base_url: str | None = None) -> dict[str, Any]:
     return _request_json("GET", f"/jobs/{job_id}/events", base_url=base_url)
 
 
-def create_comparison(
-    regulatory_document_id: str,
-    sop_document_id: str,
-    base_url: str | None = None,
-) -> dict[str, Any]:
-    return _request_json(
-        "POST",
-        "/comparisons",
-        payload={
-            "regulatory_document_id": regulatory_document_id,
-            "sop_document_id": sop_document_id,
-        },
-        base_url=base_url,
-    )
-
-
-def list_comparisons(base_url: str | None = None) -> dict[str, Any]:
-    return _request_json("GET", "/comparisons", base_url=base_url)
-
-
-def get_comparison(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
-    return _request_json("GET", f"/comparisons/{comparison_id}", base_url=base_url)
-
-
-def get_active_comparison_for_pair(
-    regulatory_document_id: str,
-    sop_document_id: str,
-    base_url: str | None = None,
-) -> dict[str, Any]:
-    return _request_json(
-        "GET",
-        "/comparisons/by-pair/active",
-        query={
-            "regulatory_document_id": regulatory_document_id,
-            "sop_document_id": sop_document_id,
-        },
-        base_url=base_url,
-    )
-
-
-def get_comparison_progress(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
-    return _request_json("GET", f"/comparisons/{comparison_id}/progress", base_url=base_url)
-
-
-def get_comparison_report(comparison_id: str, base_url: str | None = None) -> dict[str, Any]:
-    return _request_json("GET", f"/comparisons/{comparison_id}/report", base_url=base_url)
-
-
-def download_comparison_csv(comparison_id: str, base_url: str | None = None) -> bytes:
-    return _request_bytes(
-        "GET",
-        f"/comparisons/{comparison_id}/downloads/csv",
-        base_url=base_url,
-        accept="text/csv",
-    )
-
-
-def download_thought_analysis_bundle(
-    comparison_id: str,
-    base_url: str | None = None,
-) -> bytes:
-    return _request_bytes(
-        "GET",
-        f"/comparisons/{comparison_id}/downloads/thought-analysis-bundle",
-        base_url=base_url,
-        accept="application/json",
-    )
-
-
-def get_page_report(
-    comparison_id: str,
-    sop_page_number: int,
-    base_url: str | None = None,
-) -> dict[str, Any]:
-    return _request_json(
-        "GET",
-        f"/comparisons/{comparison_id}/pages/{int(sop_page_number)}",
-        base_url=base_url,
-    )
-
-
 def copilot_query(
     document_id: str,
     query: str,
@@ -230,17 +148,13 @@ def copilot_query(
 
 
 def upload_document(
-    document_type: str,
     filename: str,
     content: bytes,
     base_url: str | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    boundary = f"----doc-comparing-{uuid.uuid4().hex}"
+    boundary = f"----indexai-{uuid.uuid4().hex}"
     body_parts = [
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="document_type"\r\n\r\n'
-        f"{document_type}\r\n",
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
         "Content-Type: application/pdf\r\n\r\n",

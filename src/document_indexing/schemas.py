@@ -104,3 +104,4 @@ class IndexingOutput(StrictModel):
     processing_state_path: Path
     revision_log_path: Path
     validation_report_path: Path
+    agent_md_path: Path

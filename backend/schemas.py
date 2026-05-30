@@ -4,16 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-DocumentType = Literal["regulatory", "sop"]
-JobType = Literal[
-    "process_document",
-    "index_regulatory",
-    "index_document",
-    "prepare_document",
-    "compare_documents",
-]
+JobType = Literal["process_document", "prepare_document", "index_document"]
 RegistryStatus = Literal[
     "not_started",
     "queued",
@@ -25,11 +18,10 @@ RegistryStatus = Literal[
 
 class DocumentResponse(BaseModel):
     document_id: str
-    document_type: DocumentType
     filename: str
     processing_status: str
     indexing_status: str
-    ready_for_comparison: bool
+    indexed: bool
     page_count: int | None = None
     active_job_id: str | None = None
     error_message: str | None = None
@@ -44,7 +36,6 @@ class JobResponse(BaseModel):
     job_type: JobType
     status: str
     document_id: str | None = None
-    comparison_id: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
     error_message: str | None = None
@@ -63,83 +54,6 @@ class JobEvent(BaseModel):
 class JobEventsResponse(BaseModel):
     job_id: str
     events: list[JobEvent]
-
-
-class CreateComparisonRequest(BaseModel):
-    regulatory_document_id: str
-    sop_document_id: str
-
-
-class CreateComparisonResponse(BaseModel):
-    comparison_id: str
-    job_id: str
-    status: str
-
-
-class ComparisonStatusResponse(BaseModel):
-    comparison_id: str
-    regulatory_document_id: str
-    sop_document_id: str
-    status: str
-    report_json_path: str | None = None
-    report_md_path: str | None = None
-    error_message: str | None = None
-    progress_message: str | None = None
-    progress_current: int | None = None
-    progress_total: int | None = None
-
-
-class ComparisonListItem(BaseModel):
-    comparison_id: str
-    regulatory_document_id: str
-    regulatory_filename: str | None = None
-    sop_document_id: str
-    sop_filename: str | None = None
-    status: str
-    created_at: str | None = None
-    started_at: str | None = None
-    finished_at: str | None = None
-    report_ready: bool = False
-
-
-class ComparisonListResponse(BaseModel):
-    comparisons: list[ComparisonListItem]
-
-
-class ComparisonProgressEvent(BaseModel):
-    timestamp: str
-    stage: str
-    step: str
-    message: str
-    progress_current: int | None = None
-    progress_total: int | None = None
-
-
-class ComparisonProgressResponse(BaseModel):
-    comparison_id: str
-    regulatory_document_id: str
-    sop_document_id: str
-    status: str
-    current_stage: str | None = None
-    current_step: str | None = None
-    message: str | None = None
-    progress_current: int | None = None
-    progress_total: int | None = None
-    progress_percent: float | None = None
-    report_ready: bool = False
-    report_json_path: str | None = None
-    report_md_path: str | None = None
-    error_message: str | None = None
-    events: list[ComparisonProgressEvent] = Field(default_factory=list)
-
-
-class ActiveComparisonResponse(BaseModel):
-    regulatory_document_id: str
-    sop_document_id: str
-    active_comparison_id: str | None = None
-    latest_comparison_id: str | None = None
-    status: str | None = None
-    message: str | None = None
 
 
 class CopilotQueryRequest(BaseModel):

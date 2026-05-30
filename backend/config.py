@@ -7,7 +7,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STORAGE_ROOT = PROJECT_ROOT / "storage"
-STORAGE_ROOT_ENV = "DOC_COMPARING_STORAGE_ROOT"
+STORAGE_ROOT_ENV = "INDEXAI_STORAGE_ROOT"
 ARTIFACT_RETENTION_MODE = "standard"
 
 

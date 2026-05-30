@@ -12,6 +12,7 @@ from .config import (
 from .llm import LangChainTopicIndexingClient, TopicIndexingClient
 from .schemas import IndexingOutput, ProcessingState
 from .steps import index_page
+from .agent_guide import AGENT_MD_FILE, write_agent_memory_guide
 from .storage import (
     PROCESSING_STATE_FILE,
     REVISION_LOG_FILE,
@@ -31,6 +32,33 @@ def _indexing_output(output_folder: Path) -> IndexingOutput:
         processing_state_path=output_folder / PROCESSING_STATE_FILE,
         revision_log_path=output_folder / REVISION_LOG_FILE,
         validation_report_path=output_folder / VALIDATION_REPORT_FILE,
+        agent_md_path=output_folder / AGENT_MD_FILE,
+    )
+
+
+def _manifest_path_for_output(output_folder: Path) -> Path | None:
+    manifest_path = output_folder.parent / "manifest.json"
+    return manifest_path if manifest_path.exists() else None
+
+
+def _write_agent_guide_if_index_exists(
+    *,
+    pages_folder_path: str | Path,
+    output_folder: Path,
+    document_id: str,
+    original_filename: str | None,
+) -> None:
+    topic_index_path = output_folder / TOPIC_INDEX_FILE
+    if not topic_index_path.exists():
+        return
+    manifest = read_page_manifest(pages_folder_path)
+    write_agent_memory_guide(
+        output_dir=output_folder,
+        document_id=document_id,
+        original_filename=original_filename,
+        total_pages=manifest.total_pages,
+        topic_index_path=topic_index_path,
+        manifest_path=_manifest_path_for_output(output_folder),
     )
 
 
@@ -38,6 +66,7 @@ def run_document_indexing(
     pages_folder_path: str | Path,
     output_folder_path: str | Path,
     document_id: str,
+    original_filename: str | None = None,
     include_next_page_context: bool = DEFAULT_INCLUDE_NEXT_PAGE_CONTEXT,
     client: TopicIndexingClient | None = None,
     topic_match_batch_size: int = DEFAULT_TOPIC_MATCH_BATCH_SIZE,
@@ -52,6 +81,12 @@ def run_document_indexing(
         document_id=document_id,
     )
     if processing_state.status == "completed":
+        _write_agent_guide_if_index_exists(
+            pages_folder_path=pages_folder_path,
+            output_folder=output_folder,
+            document_id=document_id,
+            original_filename=original_filename,
+        )
         return _indexing_output(output_folder)
 
     manifest = read_page_manifest(pages_folder_path)
@@ -92,4 +127,10 @@ def run_document_indexing(
             event_callback=event_callback,
         )
 
+    _write_agent_guide_if_index_exists(
+        pages_folder_path=pages_folder_path,
+        output_folder=output_folder,
+        document_id=document_id,
+        original_filename=original_filename,
+    )
     return _indexing_output(output_folder)

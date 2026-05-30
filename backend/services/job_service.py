@@ -11,10 +11,9 @@ from backend.services import job_event_service, registry
 def _job_response(row: dict[str, str]) -> JobResponse:
     return JobResponse(
         job_id=row["job_id"],
-        job_type=row["job_type"],  # type: ignore[arg-type]
+        job_type=row["job_type"],
         status=row["status"],
         document_id=row.get("document_id") or None,
-        comparison_id=row.get("comparison_id") or None,
         started_at=row.get("started_at") or None,
         finished_at=row.get("finished_at") or None,
         error_message=row.get("error_message") or None,
@@ -24,7 +23,6 @@ def _job_response(row: dict[str, str]) -> JobResponse:
 def create_job(
     job_type: str,
     document_id: str = "",
-    comparison_id: str = "",
     log_path: str = "",
 ) -> JobResponse:
     job_id = registry.next_job_id()
@@ -32,7 +30,6 @@ def create_job(
         "job_id": job_id,
         "job_type": job_type,
         "document_id": document_id,
-        "comparison_id": comparison_id,
         "status": "queued",
         "started_at": "",
         "finished_at": "",

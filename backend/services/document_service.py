@@ -18,13 +18,13 @@ def _bool(value: object) -> bool:
 
 def _document_response(row: dict[str, str]) -> DocumentResponse:
     page_count = row.get("page_count") or None
+    indexing_status = row.get("indexing_status") or "not_started"
     return DocumentResponse(
         document_id=row["document_id"],
-        document_type=row["document_type"],  # type: ignore[arg-type]
         filename=row["original_filename"],
         processing_status=row["processing_status"],
-        indexing_status=row["indexing_status"],
-        ready_for_comparison=_bool(row["ready_for_comparison"]),
+        indexing_status=indexing_status,
+        indexed=indexing_status == "completed" and _bool(row.get("indexed")),
         page_count=int(page_count) if page_count else None,
         active_job_id=row.get("active_job_id") or None,
         error_message=row.get("error_message") or None,
@@ -38,22 +38,17 @@ def get_document_or_404(document_id: str) -> dict[str, str]:
     return row
 
 
-def list_documents(document_type: str | None = None) -> list[DocumentResponse]:
-    rows = registry.read_documents()
-    if document_type is not None:
-        rows = [row for row in rows if row["document_type"] == document_type]
-    return [_document_response(row) for row in rows]
+def list_documents() -> list[DocumentResponse]:
+    return [_document_response(row) for row in registry.read_documents()]
 
 
-def upload_document(document_type: str, original_filename: str, content: bytes) -> DocumentResponse:
-    if document_type not in {"regulatory", "sop"}:
-        raise HTTPException(status_code=400, detail="document_type must be regulatory or sop")
+def upload_document(original_filename: str, content: bytes) -> DocumentResponse:
     if not original_filename.lower().endswith(".pdf") or not content.startswith(b"%PDF"):
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
     root = registry.storage_root()
-    document_id = registry.next_document_id(document_type)
-    asset_root = registry.document_root(document_type, document_id, root)
+    document_id = registry.next_document_id()
+    asset_root = registry.document_root(document_id, root)
     original_dir = asset_root / "original"
     original_dir.mkdir(parents=True, exist_ok=True)
     stored_pdf_path = original_dir / "source.pdf"
@@ -61,14 +56,13 @@ def upload_document(document_type: str, original_filename: str, content: bytes) 
 
     row = {
         "document_id": document_id,
-        "document_type": document_type,
         "original_filename": original_filename,
         "stored_pdf_path": stored_pdf_path,
         "asset_root": asset_root,
         "uploaded_at": registry.utc_now(),
         "processing_status": "not_started",
         "indexing_status": "not_started",
-        "ready_for_comparison": "false",
+        "indexed": "false",
         "page_count": "",
         "active_job_id": "",
         "error_message": "",
@@ -105,7 +99,6 @@ def write_manifest(document_row: dict[str, str], total_pages: int, topic_index_p
     root = Path(document_row["asset_root"])
     payload = {
         "document_id": document_row["document_id"],
-        "document_type": document_row["document_type"],
         "source_file": "original/source.pdf",
         "enriched_pages_folder": "enriched_doc/pages_md",
         "page_images_folder": "docling_assets/page_images",
@@ -119,11 +112,25 @@ def write_manifest(document_row: dict[str, str], total_pages: int, topic_index_p
 
 
 def update_manifest_topic_index(document_row: dict[str, str], topic_index_path: str) -> None:
+    update_manifest_indexing_artifacts(
+        document_row,
+        topic_index_path=topic_index_path,
+        agent_md_path=None,
+    )
+
+
+def update_manifest_indexing_artifacts(
+    document_row: dict[str, str],
+    topic_index_path: str,
+    agent_md_path: str | None,
+) -> None:
     path = manifest_path(document_row)
     if not path.exists():
         raise FileNotFoundError(f"Manifest not found: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["topic_index_path"] = topic_index_path
+    if agent_md_path:
+        payload["agent_md_path"] = agent_md_path
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 

@@ -1,4 +1,4 @@
-"""Main Streamlit entrypoint for the document comparison framework."""
+"""Main Streamlit entrypoint for IndexAI."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from frontend.ui_components import api_base_url_input, configure_page, run_api_c
 
 
 def main() -> None:
-    configure_page("Document Comparison Framework")
+    configure_page("IndexAI")
     base_url = api_base_url_input()
 
-    st.caption("Upload, prepare, compare, and review SOP-vs-regulatory gap analysis reports.")
+    st.caption("Upload one PDF, process and index it, then use it as document memory.")
 
     health = run_api_call("Backend health check", lambda: api_client.health(base_url))
     if health:
@@ -22,26 +22,21 @@ def main() -> None:
 
     documents = run_api_call("Load documents", lambda: api_client.list_documents(base_url=base_url))
     docs = documents.get("documents", []) if documents else []
-    regulatory_ready = [
-        item for item in docs if item["document_type"] == "regulatory" and item["ready_for_comparison"]
-    ]
-    sop_ready = [
-        item for item in docs if item["document_type"] == "sop" and item["ready_for_comparison"]
-    ]
+    processed = [item for item in docs if item["processing_status"] == "completed"]
+    indexed = [item for item in docs if item["indexed"]]
 
     col1, col2, col3 = st.columns(3)
     col1.metric("Documents", len(docs))
-    col2.metric("Ready Regulatory", len(regulatory_ready))
-    col3.metric("Ready SOPs", len(sop_ready))
+    col2.metric("Processed", len(processed))
+    col3.metric("Memory Ready", len(indexed))
 
     st.subheader("Workflow")
     st.markdown(
         """
-1. Upload regulatory and SOP PDFs in **Upload and Prepare**.
-2. Process and index both documents.
-3. Run a comparison in **Compare Documents**.
-4. Review SOP page images and gap findings in **Review Report**.
-5. Ask indexed-document questions in **Document Co-pilot**.
+1. Upload one PDF in **Upload and Prepare**.
+2. Process the PDF into page text and page images.
+3. Index the processed pages into `topic_index.json` and document memory.
+4. Ask indexed-document questions in **Document Co-pilot**.
 """
     )
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 
 from backend.schemas import (
     CopilotQueryRequest,
@@ -26,22 +24,18 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
-    document_type: Literal["regulatory", "sop"] = Form(...),
     file: UploadFile = File(...),
 ) -> DocumentResponse:
     content = await file.read()
     return document_service.upload_document(
-        document_type=document_type,
         original_filename=file.filename or "source.pdf",
         content=content,
     )
 
 
 @router.get("", response_model=DocumentListResponse)
-def list_documents(
-    document_type: Literal["regulatory", "sop"] | None = None,
-) -> DocumentListResponse:
-    return DocumentListResponse(documents=document_service.list_documents(document_type))
+def list_documents() -> DocumentListResponse:
+    return DocumentListResponse(documents=document_service.list_documents())
 
 
 @router.post("/{document_id}/process", response_model=JobResponse)

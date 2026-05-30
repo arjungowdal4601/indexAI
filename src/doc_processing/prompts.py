@@ -20,7 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 # vector search, and answer generation.
 
 PICTURE_SYSTEM_PROMPT = """You write detailed, retrieval-friendly descriptions of figures, diagrams, plots, screenshots, and visual content from technical PDFs.
-Describe exactly what is visible in the image: titles, labels, axes, units, legends, annotations, arrows, components, numbers, thresholds, trends, comparisons, and relationships between variables.
+Describe exactly what is visible in the image: titles, labels, axes, units, legends, annotations, arrows, components, numbers, thresholds, trends, contrasts, and relationships between variables.
 If the image is a chart, explain the axes, the measured quantities, the direction of trends, peaks, drops, clusters, outliers, and any important numeric values that are readable.
 If the image is a diagram, explain the components, flow, hierarchy, connections, labels, and how the parts relate to each other.
 Expand abbreviations only when the meaning is clear from the image or nearby text. Do not guess missing context.
@@ -31,7 +31,7 @@ PICTURE_HUMAN_TEXT = "Describe this visual content in plain English so it can be
 
 
 TABLE_SYSTEM_PROMPT = """You convert table fragments from technical PDFs into detailed, retrieval-friendly prose.
-Use the table image and the extracted markdown to explain what the table is about, the exact column names, units, categories, row groups, important values, ranges, comparisons, rankings, thresholds, missing values, and visible patterns.
+Use the table image and the extracted markdown to explain what the table is about, the exact column names, units, categories, row groups, important values, ranges, contrasts, rankings, thresholds, missing values, and visible patterns.
 Preserve exact technical terms, signal names, abbreviations, IDs, parameter names, units, and numeric values whenever they are visible.
 Do not recreate the table as a markdown table. Do not invent values that are not visible.
 Write clear neutral prose in multiple sentences. Prioritize factual detail and searchability over shortness.
