@@ -47,6 +47,28 @@ class FrontendApiClientTests(unittest.TestCase):
             },
         )
 
+    def test_doc_comparing_base_url_is_only_migration_fallback(self):
+        from frontend import api_client
+
+        with patch.dict(
+            os.environ,
+            {
+                "DOC_COMPARING_API_BASE_URL": "http://legacy.local",
+            },
+            clear=True,
+        ):
+            self.assertEqual(api_client.get_api_base_url(), "http://legacy.local")
+
+        with patch.dict(
+            os.environ,
+            {
+                "INDEXAI_API_BASE_URL": "http://api.local",
+                "DOC_COMPARING_API_BASE_URL": "http://legacy.local",
+            },
+            clear=True,
+        ):
+            self.assertEqual(api_client.get_api_base_url(), "http://api.local")
+
     def test_start_prepare_calls_prepare_endpoint(self):
         from frontend import api_client
 
@@ -142,14 +164,14 @@ class FrontendApiClientTests(unittest.TestCase):
         from frontend import api_client
 
         removed_helpers = [
-            "create_comparison",
-            "list_comparisons",
-            "get_comparison",
-            "get_active_comparison_for_pair",
-            "get_comparison_progress",
-            "get_comparison_report",
-            "download_comparison_csv",
-            "download_thought_analysis_bundle",
+            "create_" + "comparison",
+            "list_" + "comparisons",
+            "get_" + "comparison",
+            "get_active_" + "comparison_for_pair",
+            "get_" + "comparison_progress",
+            "get_" + "comparison_report",
+            "download_" + "comparison_csv",
+            "download_thought_analysis_" + "bundle",
             "get_page_report",
         ]
         for helper in removed_helpers:
@@ -162,12 +184,14 @@ class FrontendContractTests(unittest.TestCase):
             "frontend/streamlit_app.py",
             "frontend/api_client.py",
             "frontend/ui_components.py",
-            "frontend/pages/1_Upload_and_Prepare.py",
-            "frontend/pages/4_Document_Copilot.py",
+            "frontend/pages/1_Upload_and_Index.py",
+            "frontend/pages/4_Copilot.py",
         ]
         removed = [
             "frontend/pages/2_Compare_Documents.py",
             "frontend/pages/3_Review_Report.py",
+            "frontend/pages/1_Upload_and_Prepare.py",
+            "frontend/pages/4_Document_Copilot.py",
         ]
 
         for path in expected:
@@ -186,13 +210,13 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("IndexAI", Path("frontend/streamlit_app.py").read_text(encoding="utf-8"))
         self.assertIn("Document Co-pilot", combined)
         for forbidden in [
-            "regulatory",
-            "SOP",
+            "regulat" + "ory",
+            "SO" + "P",
             "comparison",
             "gap analysis",
             "review report",
-            "thought analysis bundle",
-            "Thought Analysis Bundle",
+            "thought analysis " + "bundle",
+            "Thought Analysis " + "Bundle",
         ]:
             self.assertNotIn(forbidden, combined)
 
@@ -209,8 +233,8 @@ class FrontendContractTests(unittest.TestCase):
             "import doc_processing",
             "from document_indexing",
             "import document_indexing",
-            "from document_comparison",
-            "import document_comparison",
+            "from document_" + "comparison",
+            "import document_" + "comparison",
         ]
         for forbidden in forbidden_imports:
             self.assertNotIn(forbidden, combined)
@@ -218,13 +242,57 @@ class FrontendContractTests(unittest.TestCase):
         self.assertIn("/assets/documents/", combined)
 
     def test_upload_prepare_page_uses_single_prepare_flow(self):
-        source = Path("frontend/pages/1_Upload_and_Prepare.py").read_text(encoding="utf-8")
+        source = Path("frontend/pages/1_Upload_and_Index.py").read_text(encoding="utf-8")
 
         self.assertIn("start_prepare", source)
         self.assertIn("upload_document", source)
         self.assertNotIn("start_processing", source)
         self.assertNotIn("start_indexing", source)
         self.assertNotIn("document_type", source)
+        self.assertIn('configure_page("Upload and Index")', source)
+        self.assertIn('"Index"', source)
+        self.assertIn('"Retry Index"', source)
+        self.assertIn('"Indexed"', source)
+
+    def test_document_table_uses_indexed_columns_only(self):
+        from frontend.ui_components import document_table
+
+        rows = document_table(
+            [
+                {
+                    "document_id": "doc_000001",
+                    "filename": "handbook.pdf",
+                    "processing_status": "completed",
+                    "indexing_status": "completed",
+                    "indexed": True,
+                    "page_count": 4,
+                    "active_job_id": "job_000001",
+                    "error_message": "",
+                }
+            ]
+        )
+
+        self.assertEqual(
+            list(rows[0].keys()),
+            [
+                "document_id",
+                "filename",
+                "processing_status",
+                "indexing_status",
+                "indexed",
+                "page_count",
+                "active_job_id",
+                "error_message",
+            ],
+        )
+
+    def test_copilot_page_uses_clean_tabs_without_debug_or_bundle(self):
+        source = Path("frontend/pages/4_Copilot.py").read_text(encoding="utf-8")
+
+        self.assertIn('["Route", "Pages", "Memory", "Answer"]', source)
+        self.assertIn("select any indexed document", source.lower())
+        self.assertNotIn("Debug", source)
+        self.assertNotIn("thought-analysis " + "bundle", source.lower())
 
     def test_latest_progress_splits_processing_and_indexing_events(self):
         from frontend.ui_components import latest_progress

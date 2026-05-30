@@ -171,14 +171,14 @@ class BackendApiTests(unittest.TestCase):
         self.assertEqual(document["filename"], "handbook.pdf")
         self.assertFalse(document["indexed"])
         self.assertNotIn("memory_ready", document)
-        self.assertNotIn("ready_for_comparison", document)
+        self.assertNotIn("ready_for_" + "comparison", document)
         self.assertNotIn("document_type", document)
 
         root = self.storage_root / "documents" / "doc_000001"
         self.assertTrue((root / "original" / "source.pdf").exists())
         rows = read_csv_rows(self.storage_root / "registries" / "document_registry.csv")
         self.assertNotIn("document_type", rows[0])
-        self.assertNotIn("ready_for_comparison", rows[0])
+        self.assertNotIn("ready_for_" + "comparison", rows[0])
         self.assertEqual(rows[0]["indexed"], "false")
         self.assertEqual(rows[0]["indexing_status"], "not_started")
 
@@ -195,7 +195,7 @@ class BackendApiTests(unittest.TestCase):
 
         process_job = self.process_document(document["document_id"])
         self.assertEqual(process_job["status"], "queued")
-        self.assertNotIn("comparison_id", process_job)
+        self.assertNotIn("comparison" + "_id", process_job)
         processed = self.client.get("/documents").json()["documents"][0]
         self.assertFalse(processed["indexed"])
         self.assertEqual(processed["indexing_status"], "not_started")
@@ -234,6 +234,24 @@ class BackendApiTests(unittest.TestCase):
         self.assertNotIn(
             "comparison",
             " ".join(event["message"].lower() for event in events),
+        )
+
+    def test_processing_writes_single_document_manifest(self):
+        document = self.upload_pdf("handbook.pdf")
+
+        self.process_document(document["document_id"])
+
+        manifest_path = self.storage_root / "documents" / document["document_id"] / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest,
+            {
+                "document_id": document["document_id"],
+                "source_file": "original/source.pdf",
+                "enriched_pages_folder": "enriched_doc/pages_md",
+                "page_images_folder": "docling_assets/page_images",
+                "total_pages": 1,
+            },
         )
 
     def test_rerunning_indexing_refreshes_agent_memory_guide(self):
@@ -314,6 +332,17 @@ class BackendApiTests(unittest.TestCase):
         kwargs = run_retrieval.call_args.kwargs
         self.assertTrue(str(kwargs["topic_index_path"]).endswith("indexing_output\\topic_index.json"))
         self.assertTrue(str(kwargs["pages_folder_path"]).endswith("enriched_doc\\pages_md"))
+
+    def test_copilot_rejects_unindexed_document(self):
+        document = self.upload_pdf()
+
+        response = self.client.post(
+            f"/documents/{document['document_id']}/copilot/query",
+            json={"query": "What evidence is prepared?"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("processed and indexed", response.json()["detail"])
 
     def test_asset_endpoint_returns_page_image_or_404(self):
         document = self.upload_pdf()

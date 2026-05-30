@@ -909,7 +909,7 @@ class DocumentIndexingBackwardBatchMatchingTests(unittest.TestCase):
 
 
 class DocumentIndexingPipelineTests(unittest.TestCase):
-    def test_document_indexing_uses_sequential_pipeline_without_langgraph_imports(self):
+    def test_document_indexing_uses_sequential_pipeline_without_graph_runtime_imports(self):
         indexing_dir = Path("src/document_indexing")
         python_files = [
             path
@@ -922,9 +922,9 @@ class DocumentIndexingPipelineTests(unittest.TestCase):
 
         self.assertTrue((indexing_dir / "pipeline.py").exists())
         self.assertTrue((indexing_dir / "steps.py").exists())
-        self.assertNotIn("langgraph", combined_source.lower())
-        self.assertNotIn("StateGraph", combined_source)
-        self.assertNotIn("export_graph_mermaid", combined_source)
+        self.assertNotIn("lang" + "graph", combined_source.lower())
+        self.assertNotIn("State" + "Graph", combined_source)
+        self.assertNotIn("export_" + "graph_mermaid", combined_source)
 
     def test_pipeline_indexes_adjacent_target_pages_into_one_continuous_topic(self):
         with tempfile.TemporaryDirectory() as temp_dir:

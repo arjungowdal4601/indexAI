@@ -28,12 +28,12 @@ def main() -> None:
     col1, col2, col3 = st.columns(3)
     col1.metric("Documents", len(docs))
     col2.metric("Processed", len(processed))
-    col3.metric("Memory Ready", len(indexed))
+    col3.metric("Indexed", len(indexed))
 
     st.subheader("Workflow")
     st.markdown(
         """
-1. Upload one PDF in **Upload and Prepare**.
+1. Upload one PDF in **Upload and Index**.
 2. Process the PDF into page text and page images.
 3. Index the processed pages into `topic_index.json` and document memory.
 4. Ask indexed-document questions in **Document Co-pilot**.

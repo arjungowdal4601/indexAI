@@ -55,15 +55,15 @@ def render_document_actions(document: dict, base_url: str) -> None:
         if ready:
             st.write("Indexed")
         else:
-            label = "Retry Index" if failed else "Process and Index"
+            label = "Retry Index" if failed else "Index"
             if st.button(label, key=f"prepare-{document['document_id']}", disabled=running):
                 job = run_api_call(
-                    "Start prepare",
+                    "Start indexing",
                     lambda: api_client.start_prepare(document["document_id"], base_url),
                 )
                 if job:
                     st.session_state["document_jobs"][document["document_id"]] = job["job_id"]
-                    st.success(f"Prepare job queued: {job['job_id']}")
+                    st.success(f"Index job queued: {job['job_id']}")
                     st.rerun()
     job_id = (
         st.session_state["document_jobs"].get(document["document_id"])
@@ -88,7 +88,7 @@ def document_list(base_url: str) -> None:
 
 
 def main() -> None:
-    configure_page("Upload and Prepare")
+    configure_page("Upload and Index")
     base_url = api_base_url_input()
 
     upload_panel(base_url)

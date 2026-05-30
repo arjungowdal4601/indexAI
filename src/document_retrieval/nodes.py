@@ -1,8 +1,9 @@
-"""LangGraph node functions for vectorless document retrieval."""
+"""Step functions for vectorless document retrieval."""
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from .config import (
     DEFAULT_MAX_DIRECT_ESTIMATED_TOKENS,
@@ -10,13 +11,14 @@ from .config import (
     estimate_tokens,
 )
 from .schemas import PageContext, PageEvidence
-from .state import DocumentRetrievalState
 from .storage import (
     load_topic_index,
     missing_page_markdowns,
     normalize_page_numbers,
     read_selected_page_markdowns,
 )
+
+DocumentRetrievalState = dict[str, Any]
 
 
 def _format_page_context(page_contexts: list[PageContext]) -> str:

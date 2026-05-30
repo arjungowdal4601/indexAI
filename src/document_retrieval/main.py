@@ -18,7 +18,7 @@ from document_retrieval.config import (
     DEFAULT_PAGES_FOLDER,
     DEFAULT_TOPIC_INDEX_PATH,
 )
-from document_retrieval.graph import run_document_retrieval
+from document_retrieval.pipeline import run_document_retrieval
 from document_retrieval.schemas import RetrievalOutput
 
 

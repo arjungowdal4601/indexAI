@@ -64,14 +64,14 @@ def render_status(status: str) -> None:
 def document_table(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
-            "Document ID": item["document_id"],
-            "Filename": item["filename"],
-            "Processing": item["processing_status"],
-            "Indexing": item["indexing_status"],
-            "Indexed": item["indexed"],
-            "Pages": item.get("page_count") or "",
-            "Active Job": item.get("active_job_id") or "",
-            "Error": item.get("error_message") or "",
+            "document_id": item["document_id"],
+            "filename": item["filename"],
+            "processing_status": item["processing_status"],
+            "indexing_status": item["indexing_status"],
+            "indexed": item["indexed"],
+            "page_count": item.get("page_count") or "",
+            "active_job_id": item.get("active_job_id") or "",
+            "error_message": item.get("error_message") or "",
         }
         for item in documents
     ]
@@ -192,14 +192,14 @@ def render_prepare_progress(base_url: str, document: dict[str, Any], job_id: str
     )
 
     if indexing_done or (job and job.get("status") == "completed"):
-        st.success("Indexed")
+        st.success("Document memory indexed")
     elif processing_done:
-        st.caption("Indexing")
+        st.caption("Building document memory")
     else:
-        st.caption("Processing")
+        st.caption("Processing document memory")
 
-    colored_progress("Processing", processing_current, processing_total, PROCESSING_BLUE)
-    colored_progress("Indexing", indexing_current, indexing_total, INDEXING_GREEN)
+    colored_progress("Document memory processing", processing_current, processing_total, PROCESSING_BLUE)
+    colored_progress("Retrieval-ready indexing", indexing_current, indexing_total, INDEXING_GREEN)
 
     if events:
         latest = events[-1]

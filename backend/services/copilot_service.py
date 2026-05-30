@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from backend.schemas import CopilotQueryRequest, CopilotQueryResponse
 from backend.services import document_service
-from document_retrieval.graph import run_document_retrieval
+from document_retrieval.pipeline import run_document_retrieval
 
 
 def query_document_copilot(

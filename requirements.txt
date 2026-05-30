@@ -3,7 +3,6 @@ pypdf
 python-dotenv
 langchain-core
 langchain-openai
-langgraph
 pydantic
 fastapi
 uvicorn

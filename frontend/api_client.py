@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
 API_BASE_URL_ENV = "INDEXAI_API_BASE_URL"
+LEGACY_API_BASE_URL_ENV = "DOC_COMPARING_API_BASE_URL"
 DEFAULT_TIMEOUT_SECONDS = 30
 
 
@@ -20,7 +21,12 @@ class ApiError(RuntimeError):
 
 
 def get_api_base_url(base_url: str | None = None) -> str:
-    return (base_url or os.getenv(API_BASE_URL_ENV) or DEFAULT_API_BASE_URL).rstrip("/")
+    return (
+        base_url
+        or os.getenv(API_BASE_URL_ENV)
+        or os.getenv(LEGACY_API_BASE_URL_ENV)
+        or DEFAULT_API_BASE_URL
+    ).rstrip("/")
 
 
 def absolute_url(path_or_url: str, base_url: str | None = None) -> str:

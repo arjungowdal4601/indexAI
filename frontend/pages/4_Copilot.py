@@ -1,4 +1,4 @@
-"""Document co-pilot for vectorless retrieval against any indexed document."""
+"""Document co-pilot for vectorless retrieval against indexed document memory."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from frontend.ui_components import (
     api_base_url_input,
     configure_page,
     document_option,
-    format_json,
     indexed_documents,
     run_api_call,
 )
@@ -37,11 +36,15 @@ def main() -> None:
         lambda: api_client.list_documents(base_url=base_url),
     )
     documents = indexed_documents(documents_response.get("documents", []) if documents_response else [])
+    if not documents:
+        st.info("Select any indexed document after one has been uploaded and indexed.")
+        return
+
     selected = st.selectbox(
         "Indexed document",
         documents,
         format_func=document_option,
-        placeholder="Select a processed and indexed document",
+        placeholder="Select any indexed document",
     )
     query = st.text_area("Question", height=120)
     cols = st.columns(2)
@@ -69,9 +72,7 @@ def main() -> None:
         st.info("Select any indexed document and ask a question.")
         return
 
-    route_tab, pages_tab, memory_tab, answer_tab, debug_tab = st.tabs(
-        ["Route", "Pages", "Memory", "Answer", "Debug"]
-    )
+    route_tab, pages_tab, memory_tab, answer_tab = st.tabs(["Route", "Pages", "Memory", "Answer"])
     with route_tab:
         st.json(result.get("routing_decision") or {})
         st.caption("Retrieval trace")
@@ -82,7 +83,13 @@ def main() -> None:
         if selected_doc:
             for page in result.get("selected_pages") or []:
                 st.caption(f"Page {page}")
-                st.image(api_client.absolute_url(api_client.page_image_path(selected_doc, page), base_url), width="stretch")
+                st.image(
+                    api_client.absolute_url(
+                        api_client.page_image_path(selected_doc, page),
+                        base_url,
+                    ),
+                    width="stretch",
+                )
     with memory_tab:
         st.metric("Estimated context tokens", result.get("estimated_context_tokens") or 0)
         st.write(f"Memory mode: {result.get('memory_mode') or 'unknown'}")
@@ -90,9 +97,6 @@ def main() -> None:
             st.json(result["compressed_evidence"])
     with answer_tab:
         _render_answer(result)
-    with debug_tab:
-        st.caption("Copy this response payload for retrieval review.")
-        st.code(format_json(result), language="json")
 
 
 if __name__ == "__main__":

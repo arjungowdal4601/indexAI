@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from document_retrieval import run_document_retrieval
-from document_retrieval.graph import export_graph_mermaid
 from document_retrieval.llm import LangChainRetrievalClient
 from document_retrieval.main import format_retrieval_output, run_retrieval_pipeline
 from document_retrieval.nodes import check_page_files_exist_node, estimate_context_size_node
@@ -279,20 +278,25 @@ class DocumentRetrievalPromptTests(unittest.TestCase):
         self.assertNotIn("keywords", prompt_text.lower())
 
 
-class DocumentRetrievalGraphTests(unittest.TestCase):
-    def test_exports_mermaid_graph_with_retrieval_nodes(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = Path(temp_dir) / "document_retrieval_graph.mmd"
+class DocumentRetrievalPipelineTests(unittest.TestCase):
+    def test_public_retrieval_path_uses_linear_pipeline_without_graph_runtime(self):
+        retrieval_dir = Path("src/document_retrieval")
+        combined_source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in retrieval_dir.glob("*.py")
+            if path.name != "__pycache__"
+        )
+        backend_source = Path("backend/services/copilot_service.py").read_text(
+            encoding="utf-8"
+        )
 
-            export_graph_mermaid(output_path)
+        self.assertTrue((retrieval_dir / "pipeline.py").exists())
+        self.assertIn("from document_retrieval.pipeline import run_document_retrieval", backend_source)
+        self.assertNotIn("lang" + "graph", combined_source.lower())
+        self.assertNotIn("State" + "Graph", combined_source)
+        self.assertNotIn("export_" + "graph_mermaid", combined_source)
 
-            mermaid = output_path.read_text(encoding="utf-8")
-            self.assertIn("load_topic_index", mermaid)
-            self.assertIn("route_query_to_topics", mermaid)
-            self.assertIn("answer_from_pages", mermaid)
-            self.assertIn("answer_from_compressed_evidence", mermaid)
-
-    def test_graph_answers_directly_with_selected_page_markdown(self):
+    def test_pipeline_answers_directly_with_selected_page_markdown(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             topic_index_path = root / "indexing_output" / "topic_index.json"
@@ -320,7 +324,7 @@ class DocumentRetrievalGraphTests(unittest.TestCase):
             self.assertFalse(client.compressed_called)
             self.assertIn("PAGE 1", client.direct_page_context)
 
-    def test_graph_compresses_evidence_when_page_budget_is_exceeded(self):
+    def test_pipeline_compresses_evidence_when_page_budget_is_exceeded(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             topic_index_path = root / "indexing_output" / "topic_index.json"
